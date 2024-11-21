@@ -4,7 +4,15 @@
 .Ruserdata
 *.Rproj
 .DS_Store
+.RDataTmp1
 .RDataTmp
 *.RData
-*.txt.gz
+*.csv.gz
 *.mp4
+*.rds
+*.tar.gz
+*.txt.gz
+www/
+rsconnect/
+expression_data/
+network/
