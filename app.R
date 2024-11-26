@@ -24,6 +24,8 @@ library(RColorBrewer)
 library(htmlwidgets)
 library(shinyjs)
 library(shinydashboard)
+library(data.table)
+library(R.utils)
 
 #paquete pacman: pacman load
 
@@ -32,54 +34,151 @@ create_label <- function(name, image, width) {
   paste0("<img src = '", image, "' width = '", width, "' /><br>", name)
 }
 
-#Load data
-load("RData/data_1_3_2_year_around_v2_app.RData")
-load("RData/genetable_1_3_2_year_around_v2.RData")
+read_RDS_from_tar <- function(archive_path, gene_names, session) {
+  # Use lapply to extract RDS files for each gene and return a list of results
+  results_list <- lapply(gene_names, function(gene_name) {
+    # Construct the tar command to extract the specific gene's .rds file
+    tar_command <- paste('tar xf', shQuote(archive_path), '-O', shQuote(paste(gene_name, ".rds", sep = "")))
+    
+    # Open a pipe to extract and read the RDS file
+    con <- pipe(tar_command)
+    
+    # Read and return the RDS data for the current gene
+    tryCatch({
+    readRDS(gzcon(con))
+    }, error = function(e) {
+      NULL
+    })
+  })
+  
+  # Combine all the data frames in the list by row-binding them
+  combined_data <- do.call(rbind, results_list)
+  
+  # Return the combined data frame
+  return(combined_data)
+}
 
-samples.sep <- samples.sep %>% 
-  unite("Treatment_Week", Treatment, Week, na.rm = TRUE, sep = "") 
+get_first_neigh <- function(selected_genes, index_file, col, edges_sorted) {
+  # Find the corresponding start row and edge count for the selected gene
+  gene_index <- index_file %>% filter(!!ensym(col) %in% selected_genes)
+  
+  found_genes <- intersect(selected_genes, gene_index[[col]])
+  
+  if (length(found_genes) == 0) {
+    return(NULL)
+  }
+  
+  
+  # if (nrow(gene_index) == 0) {
+  #   
+  #   # return(data.frame(fromNode = character(), toNode = character(), weight = numeric()))
+  #   stop("Gene(s) not found in index file.")
+  # }
+  # 
+  # Initialize an empty list to store results
+  all_selected_rows <- lapply(found_genes, function(gene) {
+    
+    # Loop through each gene and get the corresponding rows
+    gene_rows <- gene_index %>% filter(!!ensym(col) == gene)
+    start_row <- gene_rows$start_row
+    edge_count <- gene_rows$edges
+    
+    # Get the rows for this gene from the edges_sorted_from file
+    selected_rows <- fread(paste0("network/", edges_sorted, ".csv.gz"), skip = start_row, nrows = edge_count) 
+    
+    selected_rows
+    
+  })
+  
+  # Combine all the selected rows into a single data frame
+  result_df <- bind_rows(all_selected_rows)
+  colnames(result_df) <- c("fromNode", "toNode", "weight")
+  return(result_df)
+}
 
-samples.sep$Treatment_Week <- if_else(samples.sep$Location == "Greenhouse" , samples.sep$Treatment_Week, "")
-
-samples.sep <- samples.sep %>% 
-  unite("Month/Treatment", Month, Treatment_Week, na.rm = TRUE, sep = "")
-
-treatment_mapping <- c(
-  "SEP", "OCT", "DEC", "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL",
-  "AUG", "SD15", "CT2", "CT8", "CT10", "LD1", "LD2", "LD3", "LD4", "SD1", 
-  "SD2", "SD3", "SD10"
-)
-
-samples.sep$Treatment2 <- match(samples.sep$`Month/Treatment`, treatment_mapping)
-
-samples.sep$Location <- factor(samples.sep$Location,
-                               levels = c("Outdoor", 
-                                          "Greenhouse"),
-                               labels = c("Outdoor",
-                                          "Indoor"))
-
-samples.sep <- samples.sep %>%
-  arrange(desc(Location), Tissue) %>% 
-  arrange(Treatment2)
-
-expression_data <- data %>% 
-  as.data.frame() %>% 
-  rownames_to_column(var = "Gene") %>% 
-  pivot_longer(!Gene, names_to = "Samples", values_to = "Expression") %>% 
-  mutate(Sample = factor(Samples, levels = colnames(data))) %>% 
-  left_join(samples.sep %>% dplyr::select(-Expression), by = "Samples") %>% 
-  arrange(Treatment2)
 
 
-TF_list <-sort(discard(as.vector(unique(subannot$Family)), is.na))
+
+
+
+first_neigh_ann <- function(filtered_edges_file, selected_genes, edge_weight) {
+    
+    first_neigh <- filtered_edges_file %>%
+      filter(weight >= edge_weight) %>% 
+      pivot_longer(cols = c(fromNode, toNode), names_to = "node_type", values_to = "node") %>%
+      filter(!node %in% selected_genes) %>%
+      distinct(node, weight)
+    
+    # Add the gene as a self-loop edge
+    goi <- data.frame(node = selected_genes, weight = 1)
+    first_neigh <- rbind(goi, first_neigh)
+
+    # Annotate and format
+    ann <- first_neigh %>%
+      left_join(nodes_subannot, by = c("node" = "Gene name")) %>%
+      # separate(Module, c('Module_color', 'Module'), sep = "/") %>%
+      arrange(desc(weight)) 
+      # dplyr::select(-GOI, -Module_color)
+
+    colnames(ann)[c(1,2)] <- c("Gene name", "Edge weight")
+
+    # Add links
+    ann <- ann %>%
+      mutate(link = paste0('<a href="https://plantgenie.org/gene?id=', ann[[1]], '" target="_blank">', ann[[1]], '</a>'), .before = `Gene name`)
+  return(ann)  
+}
+
+get_edges_neigh <- function(selected_genes, index_file, col, edges_sorted, edge_weight) {
+ 
+  gene_index <- index_file %>% filter(!!ensym(col) %in% selected_genes)
+
+  all_selected_rows <- lapply(selected_genes, function(gene) {
+    print(gene)
+    gene_rows <- gene_index %>% filter(!!ensym(col) == gene)
+    
+    if (nrow(gene_rows) == 0) {
+      print("Gene not found in index file.")
+      return(NULL)
+    }
+    
+    start_row <- gene_rows$start_row
+    edge_count <- gene_rows$edges
+    
+    # Get the rows for this gene from the edges_sorted_from file
+    selected_rows <- fread(paste0("network/", edges_sorted, ".csv.gz"), skip = start_row, nrows = edge_count) 
+    colnames(selected_rows) <- c("fromNode", "toNode", "weight")
+    selected_rows <- selected_rows %>% 
+      filter(fromNode %in% selected_genes & toNode %in% selected_genes) %>% 
+      filter(weight >= edge_weight)
+    
+    return(selected_rows)
+  })
+  
+  # Combine all the selected rows into a single data frame
+  result_df <- bind_rows(all_selected_rows) 
+
+  return(result_df)
+}
+
+get_subnetwork <- function (neigh_table, selected_genes, edge_weight, filtered_edges_file){
+  first_neigh_nodes <- neigh_table$`Gene name`
+  first_neigh_nodes <- setdiff(first_neigh_nodes, selected_genes)
+  
+  first_neigh_edges <- get_edges_neigh(first_neigh_nodes, index_from, "fromNode", "edges_sorted_from", edge_weight)
+  
+  results <- rbind(filtered_edges_file %>% 
+                     filter(weight >= edge_weight), first_neigh_edges)
+  return(results)
+}
+
+
+
+
 
 gg_color_hue <- function(n) {
   hues = seq(15, 375, length = n + 1)
   hcl(h = hues, l = 65, c = 100)[1:n]
 }
-
-nodes <- data.frame(read_delim("network/nodes-all_1_3_2_year_around_v2_0.1.txt"))
-edges <- data.frame(read_delim("network/edges-all_1_3_2_year_around_v2_0.1.txt"))
 
 custom_theme <- bslib::bs_theme(
   version = 3,           # Using Bootstrap 3
@@ -91,8 +190,7 @@ custom_theme <- bslib::bs_theme(
   bg = "#f0f8f7"         # Light background color
 )
 
-font_add_google(name = "Lato", family = "lato")
-showtext_auto()
+
 
 #https://stackoverflow.com/questions/14452465/how-to-create-textarea-as-input-in-a-shiny-webapp-in-r
 textareaInput <- function(id, label, value, rows=20, cols=35, class="form-control"){
@@ -101,40 +199,17 @@ textareaInput <- function(id, label, value, rows=20, cols=35, class="form-contro
     tags$label('for'=id,label),
     tags$textarea(id=id,class=class,rows=rows,cols=cols,value))
 }
-
-legend <- {
-  df <- subannot %>% 
-    dplyr::select(Module) %>% 
-    separate(Module, c('Color', 'Module'), sep = "/") %>% 
-    unique() %>% 
-    mutate(y = 1:47,
-           x = 1)
-  df$Module <- factor(df$Module, 
-                      levels = as.character(0:47))
-  suppressWarnings({
     
-    plot_leg <- ggplot(df, aes(x, y, color = Module)) +
-      geom_point(show.legend = TRUE) +
-      scale_color_manual(name = "Modules",
-                         values = c("grey", "turquoise", "blue", "brown", "yellow","green","red",  "black", "pink", "magenta", "purple", "greenyellow", "tan", "salmon", "cyan", "midnightblue", "lightcyan", "grey60", "lightgreen",
-                                    "lightyellow", "royalblue", "darkred", "darkgreen", "darkturquoise","darkgrey", "orange", "darkorange", "white","skyblue", "saddlebrown", "paleturquoise", "steelblue", "violet", "darkolivegreen", "darkmagenta", "sienna3", "yellowgreen", "skyblue3",        
-                                    "plum1", "orangered4", "mediumpurple3", "lightsteelblue1", "lightcyan1", "ivory", "floralwhite", "darkorange2", "brown4")) +
-      guides(color = guide_legend(override.aes = list(size = 4))) +
-      theme_classic() +
-      theme(
-        legend.key = element_rect(fill = "#C1D6E0"),
-        legend.background = element_rect(fill = "#C1D6E0"),
-        legend.title = element_text(size = 18, family = "lato", face = "bold"),
-        legend.text = element_text(size = 14, family = "lato"),
-        legend.key.size = unit(0.8, 'cm'))
-    
-    cowplot::get_legend(plot_leg)
-  })
-  }
-    
+# TF_list <-sort(discard(as.vector(unique(subannot$Family)), is.na))
 
+font_add_google(name = "Lato", family = "lato")
+showtext_auto()
 
-
+index_from <- readRDS("network/index_from.rds")
+index_to <- readRDS("network/index_to.rds")
+# subannot <- readRDS("subannot.rds") #No neeed for subannot, load nodes.rds that will have 17628 rows, less than subannot, less heavy. 
+nodes_subannot <- readRDS("nodes_subannot.rds")
+legend_colors <- readRDS("legend_colors.rds")
 
 ui <- fluidPage(
   # theme = shinytheme("flatly"),
@@ -297,8 +372,9 @@ ui <- fluidPage(
                    id = "gene_selection", open = "Gene Selection",
                    bsCollapsePanel(
                      "Gene Selection",
-                     selectizeInput("gene", "Choose Gene:", choices = NULL, multiple = FALSE, 
-                                    options = list(placeholder = 'Type in your gene: ie. Potra2n...', maxOptions = 50)),
+                     textInput("gene", "Type in your gene (ie. Potra2n...)", value = ""),
+                     # selectizeInput("gene", "Choose Gene:", choices = NULL, multiple = FALSE, 
+                     #                options = list(placeholder = 'Type in your gene: ie. Potra2n...', maxOptions = 50)),
                      actionButton("submit", "Plot Expression", status = "info"),
                      div(style = "margin-bottom: 40px;"), 
                      textOutput("error_message"),
@@ -408,8 +484,8 @@ ui <- fluidPage(
                      radioButtons(inputId="List_gen",label="1. Choose or paste a list of genes", selected=character(0),
                                   choices=c("Choose a transcription factor family" = "fam",
                                             "Paste a list of genes" = "paste")),
-                     conditionalPanel('input.List_gen === "fam"', selectizeInput(inputId = "TFfamil", label = "2. Pick a TF family",
-                                                                                 choices = TF_list, selected = character(0), multiple =T, options=list(placeholder = '', maxItems=1))),
+                     # conditionalPanel('input.List_gen === "fam"', selectizeInput(inputId = "TFfamil", label = "2. Pick a TF family",
+                     #                                                             choices = TF_list, selected = character(0), multiple =T, options=list(placeholder = '', maxItems=1))),
                      conditionalPanel('input.List_gen === "paste"', textareaInput(id="Genes_list_Tab2","2. Paste a list of genes","",rows=20),
                                       div(HTML("<i>One gene per line, no separator</i>"),style = "margin-bottom:15px")),
                      actionButton("show_heatmap", "Generate heatmap", status = "info"),
@@ -587,54 +663,178 @@ ui <- fluidPage(
   })
 
 
-  updateSelectizeInput(session, "gene", choices = c("", unique(expression_data$Gene), server = TRUE))
+  # updateSelectizeInput(session, "gene", choices = c("", unique(expression_data$Gene), server = TRUE))
   
-  values <- reactiveValues(gene = NULL, selected_genes = NULL, max_weight = NULL, threshold_message = NULL, error_message = NULL, thr = NULL , list_genes = NULL, max_weight_mult = NULL, max_min_weight_mult = NULL, threshold_message_multiple = NULL, error_message_multiple = NULL, thr_mult = NULL, selected_genes_mult = NULL)
+  values <- reactiveValues(gene = NULL, selected_genes = NULL, max_weight = NULL, threshold_message = NULL, error_message = NULL, thr = NULL , 
+                           # filtered_nodes = NULL, 
+                           subnetwork = NULL, 
+                           network_data = NULL, 
+                           legend_data = NULL,
+                           list_genes = NULL, max_weight_mult = NULL, max_min_weight_mult = NULL, threshold_message_multiple = NULL, error_message_multiple = NULL, thr_mult = NULL, selected_genes_mult = NULL)
+  
 
-  process_gene <- function(values, input_gene, input_weight_thr, edges) {
+  process_gene <- function(values, input_gene, input_weight_thr) {
 
-    values$error_message <- NULL
+    # values$error_message <- NULL
     values$threshold_message <- NULL
     values$max_weight <- NULL
     values$thr <- NULL
-
-    # Validate the gene input
-    if (is.null(input_gene) || input_gene == "") {
-      values$error_message <- "This gene is not in the dataset"
-    } else {
-      # Gene is valid; proceed with processing
-      values$error_message <- NULL
-
-      # Filter edges related to the gene
-      filtered_edges <- edges %>%
-        filter(fromNode == input_gene | toNode == input_gene)
-
-      # Compute the maximum weight
-      max_wt <- max(filtered_edges$weight, na.rm = TRUE)
-      if (is.infinite(max_wt)) {
-        values$max_weight <- NULL
-        values$threshold_message <- "This gene is below the minimum network threshold."
-      } else {
-        values$max_weight <- max_wt
-        print(values$max_weight)
-        values$threshold_message <- paste(
-          "The highest edge weight of your gene of interest is",
-          trunc(values$max_weight * 10^2) / 10^2,
-          ". If the chosen network threshold is higher than this value, the table and the network will appear empty."
-        )
+      
+      # Check if the 'first neighbors' file exists
+      if (is.null(filtered_edges())) {
+        
+        if(is.null(expression_data())) {
+          # values$error_message <- paste("No data found for gene", input_gene, ". Please check the gene name.")
+          values$max_weight <- NULL
+          values$threshold_message <- paste("No data found for gene", input_gene, ". Please check the gene name.")
+        } else {
+          values$max_weight <- NULL  
+          values$threshold_message <- "This gene is below the minimum network threshold, but expression data is available for plotting."
+        }
       }
-    }
+        else {
+          max_wt <- max(filtered_edges()$weight)
+          values$max_weight <- max_wt
+          values$threshold_message <- paste(
+            "The highest edge weight of your gene of interest is",
+            trunc(values$max_weight * 10^2) / 10^2,
+            ". If the chosen network threshold is higher than this value, the table and the network will appear empty."
+          )
+          # values$error_message <- NULL
+        }
+    values$thr <- input_weight_thr
+    
+  }
+        
+   
+    
+    
+    
+    # process_gene <- function(values, input_gene, input_weight_thr, edges) {
+    #   
+    #   values$error_message <- NULL
+    #   values$threshold_message <- NULL
+    #   values$max_weight <- NULL
+    #   values$thr <- NULL
+    #   
+    #   if (is.null(input_gene) || input_gene == "") {
+    #     # Case: Empty or invalid input for gene
+    #     values$error_message <- "This gene is not in the dataset."
+    #     values$max_weight <- NULL
+    #     values$threshold_message <- NULL
+    #   } else {
+    #     # Reset the error message if the gene input is not empty
+    #     values$error_message <- NULL
+    #     
+    #     # Define paths for both files
+    #     # file_path_neigh <- paste0("network/", input_gene, "/", input_gene, "_first_neighbors.rds")
+    #     # file_path_expr <- paste0("expression_data/", input_gene, "/", input_gene, ".rds")
+    #     
+    #     # Check if the 'first neighbors' file exists
+    #     if (file.exists("filtered_edges")) {
+    #       # Load the first neighbors data if available
+    #       first_neigh <- readRDS(file_path_neigh)
+    #       
+    #       # Set the maximum weight for threshold messaging
+    #       max_wt <- first_neigh$Edge_weight[2]
+    #       values$max_weight <- max_wt
+    #       values$threshold_message <- paste(
+    #         "The highest edge weight of your gene of interest is",
+    #         trunc(values$max_weight * 10^2) / 10^2,
+    #         ". If the chosen network threshold is higher than this value, the table and the network will appear empty."
+    #       )
+    #       
+    #     } else if (file.exists(file_path_expr)) {
+    #       # Case: Only the expression file exists
+    #       expression_data <- readRDS(file_path_expr)
+    #       values$max_weight <- NULL  # No max weight available
+    #       values$threshold_message <- "This gene is below the minimum network threshold, but expression data is available for plotting."
+    #       
+    #     } else {
+    #       # Case: Neither file exists (likely a typo or gene not in dataset)
+    #       values$error_message <- paste("No data found for gene", input_gene, ". Please check the gene name.")
+    #       values$max_weight <- NULL
+    #       values$threshold_message <- NULL
+    #     }
+    #   }
+
+    # # Validate the gene input
+    # if (is.null(input_gene) || input_gene == "") {
+    #   values$error_message <- "This gene is not in the dataset"
+    # } else {
+    #   # Gene is valid; proceed with processing
+    #   values$error_message <- NULL
+    # 
+    #   # Filter edges related to the gene
+    #   filtered_edges <- edges %>%
+    #     filter(fromNode == input_gene | toNode == input_gene)
+    # 
+    #   # Compute the maximum weight
+    #   max_wt <- max(filtered_edges$weight, na.rm = TRUE)
+    #   if (is.infinite(max_wt)) {
+    #     values$max_weight <- NULL
+    #     values$threshold_message <- "This gene is below the minimum network threshold."
+    #   } else {
+    #     values$max_weight <- max_wt
+    #     print(values$max_weight)
+    #     values$threshold_message <- paste(
+    #       "The highest edge weight of your gene of interest is",
+    #       trunc(values$max_weight * 10^2) / 10^2,
+    #       ". If the chosen network threshold is higher than this value, the table and the network will appear empty."
+    #     )
+    #   }
+    # }
 
     # Update the threshold value
-    values$thr <- input_weight_thr
-  }
+
+  
+  # selected_genes <- c("Potra2n8c17315", "Potra2n1016s36925")
+  # index_from  %>%  filter(fromNode == "Potra2c131s34674")
+  # index_to  %>%  filter(toNode == "Potra2c131s34674")
+  
+  filtered_edges <- eventReactive(input$submit, {
+    req(input$gene)
+    print("filtered edges done")
+    
+    rbind(
+      get_first_neigh(input$gene, index_from, "fromNode", "edges_sorted_from"), 
+      get_first_neigh(input$gene, index_to, "toNode", "edges_sorted_to")) 
+  })
+  
+  expression_data <- eventReactive(input$submit, {
+    req(input$gene)
+    
+    read_RDS_from_tar("expression_data.tar.gz", input$gene, session)
+  })
+  
+  # b <-rbind(
+  #   get_first_neigh(
+  #     c("Potra2c131s34674", "Potra2n8c17315"), index_from, "fromNode", "edges_sorted_from"), 
+  #   get_first_neigh(
+  #     c("Potra2c131s34674", "Potra2n8c17315"), index_to, "toNode", "edges_sorted_to"))
+  # 
+  # c <-rbind(
+  #   get_first_neigh(
+  #     c("Potra2n8c17315"), index_from, "fromNode", "edges_sorted_from"), 
+  #   get_first_neigh(
+  #     c("Potra2n8c17315"), index_to, "toNode", "edges_sorted_to"))
+
+  
+  
+  
+  # #Insert this!!!
+  # gene_names <- c("Potra2n8c17315", "Potra2c131s34674")
+  # gene_names <- c("Potra2c131s34674")
+  
+  
+  
 
   observeEvent(input$submit, {
     values$gene <- input$gene  # Update values$gene
     print("Gene captured in submit")
     print(values$gene)
 
-    process_gene(values, values$gene, input$weight_thr, edges)
+    process_gene(values, values$gene, input$weight_thr)
   })
 
   # Update values$gene when submit_table button is clicked
@@ -643,86 +843,89 @@ ui <- fluidPage(
     print("Gene captured in submit_table")
     print(values$gene)
 
-    process_gene(values, values$gene, input$weight_thr, edges)
+    process_gene(values, values$gene, input$weight_thr)
   })
 
-  observe({
-    print("Observer triggered")  # Debugging: see if observer is triggered
-    # req(values$gene)
-    print(isolate(values$gene))  # Safely print the gene value
-  })
+  # observe({
+  #   print("Observer triggered")  # Debugging: see if observer is triggered
+  #   # req(values$gene)
+  #   print(isolate(values$gene))  # Safely print the gene value
+  # })
 
   # Display error message if any
   output$error_message <- renderText({
     values$error_message
   })
 
-  observeEvent(input$submit_table, {
-    values$thr <- input$weight_thr
-    print(values$thr)
-  })
+  # observeEvent(input$submit_table, {
+  #   values$thr <- input$weight_thr
+  #   print(values$thr)
+  # })
 
   # Render max weight message
   output$threshold_message <- renderText({
     values$threshold_message
   })
 
+  
+  
   #Create reactive plot data
   data_single_out <- eventReactive(input$submit, {
     req(values$gene)  # Ensure that gene is set
 
     # If there's an error, return NULL to prevent plotting
-    if (!is.null(values$error_message)) {
+    if (is.null(expression_data())) {
       return(NULL)
     }
 
-    df <- expression_data %>%
-      filter(Gene == values$gene) %>%
-      group_by(`Month/Treatment`, Location, Treatment2) %>%
-      summarize(mean = mean(Expression),
-                se = std.error(Expression)) %>%
-      arrange(Treatment2) %>%
+    df <- expression_data() %>%
+      # filter(Gene == values$gene) %>%
+      # group_by(`Month/Treatment`, Location, Treatment2) %>%
+      # summarize(mean = mean(Expression),
+      #           se = std.error(Expression)) %>%
+      # arrange(Treatment2) %>%
       filter(Location == "Outdoor")
-    df$`Month/Treatment` <- factor(df$`Month/Treatment`, levels = c("SEP",
-                                                              "OCT",
-                                                              "DEC",
-                                                              "JAN",
-                                                              "FEB",
-                                                              "MAR",
-                                                              "APR",
-                                                              "MAY",
-                                                              "JUN",
-                                                              "JUL",
-                                                              "AUG"))
-    df
+    
+    # df$`Month/Treatment` <- factor(df$`Month/Treatment`, levels = c("SEP",
+    #                                                           "OCT",
+    #                                                           "DEC",
+    #                                                           "JAN",
+    #                                                           "FEB",
+    #                                                           "MAR",
+    #                                                           "APR",
+    #                                                           "MAY",
+    #                                                           "JUN",
+    #                                                           "JUL",
+    #                                                           "AUG"))
+    # df
   })
 
   data_single_gh <- eventReactive(input$submit, {
     req(values$gene)  # Ensure that gene is set
 
     # If there's an error, return NULL to prevent plotting
-    if (!is.null(values$error_message)) {
+    if (is.null(expression_data())) {
       return(NULL)
     }
 
-    df <- expression_data %>%
-      filter(Gene == values$gene) %>%
-      group_by(`Month/Treatment`, Location, Treatment2) %>%
-      summarize(mean = mean(Expression),
-                se = std.error(Expression)) %>%
-      arrange(Treatment2) %>%
+    df <- expression_data() %>%
+      # filter(Gene == values$gene) %>%
+      # group_by(`Month/Treatment`, Location, Treatment2) %>%
+      # summarize(mean = mean(Expression),
+      #           se = std.error(Expression)) %>%
+      # arrange(Treatment2) %>%
       filter(Location == "Indoor")
-    df$`Month/Treatment` <- factor(df$`Month/Treatment`, levels = c("SD15","CT2","CT8","CT10",
-                                                              "LD1","LD2","LD3", "LD4",
-                                                              "SD1","SD2","SD3","SD10"))
-    df
+    # df$`Month/Treatment` <- factor(df$`Month/Treatment`, levels = c("SD15","CT2","CT8","CT10",
+    #                                                           "LD1","LD2","LD3", "LD4",
+    #                                                           "SD1","SD2","SD3","SD10"))
+    # df
 
   })
   
   # Render Expression Plots
   output$expression_plots <- renderPlot({
     req(input$submit)
-    if (!is.null(values$error_message)) {
+    if (is.null(expression_data())) {
       ggplot() +
         theme_void() +
         labs(title = "")
@@ -751,8 +954,8 @@ ui <- fluidPage(
       )
       
 
-    filtered_data <- expression_data %>%
-      dplyr::filter(Gene == values$gene)
+    # filtered_data <- expression_data %>%
+    #   dplyr::filter(Gene == values$gene)
     
     plot_expression <- function(data, labels) {
       ggplot(data, aes(x = `Month/Treatment`, y = mean, ymin = mean - se,
@@ -765,7 +968,7 @@ ui <- fluidPage(
              title = values$gene) +
         scale_x_discrete(name = NULL,
                          labels = labels)+
-        ylim(-0.3, round(max(filtered_data$Expression) + 2)) +
+        ylim(-0.3, round(max(expression_data()$mean) + 2)) +
         theme_classic() +
         theme(plot.title = element_text(size = 24, face = "bold", margin = margin(t = 0, r = 0, b = 20, l = 0)),
               axis.title = element_text(size = 15,color = "black"),
@@ -859,64 +1062,115 @@ ui <- fluidPage(
       write.csv(rbind(data_single_out(), data_single_gh()), file, row.names = FALSE)
     })
 
-  observeEvent(input$submit, {
-    output$node_table <- DT::renderDT({
-      # Create an empty dataframe with the same structure as filtered_nodes_ann
-      empty_df <- data.frame("Gene name" = character(),
-                             "Module" = character(),
-                             "Centrality" = numeric(),
-                             "ATG symbol" = character(),
-                             "ATG full name" = character(),
-                             stringsAsFactors = FALSE)
-      DT::datatable(empty_df)
-    })
+  # observeEvent(input$submit, {
+  #   output$node_table <- DT::renderDT({
+  #     # Create an empty dataframe with the same structure as filtered_nodes_ann
+  #     empty_df <- data.frame("Gene name" = character(),
+  #                            "Module" = character(),
+  #                            "Centrality" = numeric(),
+  #                            "ATG symbol" = character(),
+  #                            "ATG full name" = character(),
+  #                            stringsAsFactors = FALSE)
+  #     DT::datatable(empty_df)
+  #   })
+  # })
+
+
+
+
+
+  #Create first neighbors table for display
+  
+  # observeEvent(input$submit_table, {
+  #   req(values$gene, values$thr)
+  #   filtered_nodes_value <- first_neigh_ann(filtered_edges(), values$gene, values$thr)
+  #   first_neigh_ann(filtered_edges(), values$gene, values$thr) 
+  #   values$filtered_nodes <- filtered_nodes_value
+  #   print("filtered nodes created")
+  # })
+  # 
+  
+  #You need to make this observeEvent, maybe put it into values
+
+  filtered_nodes <- eventReactive(input$submit_table, {
+    req(values$gene)
+    print("filtered nodes done")
+    df <- first_neigh_ann(filtered_edges(), values$gene, values$thr)
+    df
   })
-
-  # #Make table with selected gene and 1st neighbours
+  
+  #For display
   filtered_nodes_ann <- eventReactive(input$submit_table, {
-    req(values$gene)  # Ensure gene is not NULL
-    gene_to_check <- input$gene
-    # gene_to_check <- "Potra2n1c3477"
-    filtered_edges <- edges %>%
-      filter((fromNode == gene_to_check | toNode == gene_to_check) & weight >= values$thr) # Combine filtering conditions
+    req(values$gene)
+    print("filtered_nodes_ann done")
+    
+    # df <- filtered_nodes()
+    # print("filtered_nodes() returned:")
+    # print(head(df))
+    
+    df <- filtered_nodes() %>%
+      dplyr::select(!`Gene name`)
+    
+    # df <- dplyr::select(df, -`Gene name`)
+    colnames(df)[1] <- "Gene name"
+    df
+    
+  })
+  
+  #Create subnetwork
+  # subnetwork <- eventReactive(input$submit_table, {
+  #   
 
-      if (nrow(filtered_edges) > 0) {
-
-        goi_edge <- data.frame(fromNode = gene_to_check,
-                               toNode = gene_to_check,
-                               weight = 1,
-                               direction = "undirected",
-                               fromAltName = gene_to_check,
-                               toAltName = gene_to_check)
-
-        filtered_edges <- rbind(goi_edge, filtered_edges)
-      }
-
-    filtered_nodes <- data.frame(id = unique(c(filtered_edges$fromNode, filtered_edges$toNode)),
-                                 # Module = nodes$Module[nodes$nodeName %in% unique(c(filtered_edges$fromNode, filtered_edges$toNode))],
-                                 # Degree = nodes$Degree[nodes$nodeName %in% unique(c(filtered_edges$fromNode, filtered_edges$toNode))],
-                                 Edge_weight = filtered_edges$weight) #Nodes are in the same order in node and edge file
-
-    filtered_nodes$nodeID <- match(filtered_nodes$id, unique(filtered_nodes$id)) - 1
-
-    ann <- filtered_nodes %>%
-      left_join(subannot, by = c("id" = "Gene name")) %>%
-      separate(Module, c('Module_color', 'Module'), sep = "/") %>%
-      arrange(desc(Edge_weight)) %>%
-      dplyr::select(-nodeID, -GOI, -Module_color)
-
-    colnames(ann)[1] <- c("Gene name")
-
-    if (nrow(filtered_edges) > 0) {
-
-    ann[[1]] <- paste0('<a href="https://plantgenie.org/gene?id=', ann[[1]], '" target="_blank">', ann[[1]], '</a>')
-    }
-    return(ann)
-})
+  
+  # first_neigh <- first_neigh_ann(filtered_edges(), input$gene, input$thr)
+  # subnetwork <- get_subnetwork(first_neigh, selected_genes, input$thr, filtered_edges())
+  # #Make table with selected gene and 1st neighbours
+#   filtered_nodes_ann <- eventReactive(input$submit_table, {
+#     req(values$gene)  # Ensure gene is not NULL
+#     gene_to_check <- input$gene
+#     # gene_to_check <- "Potra2n1c3477"
+#     filtered_edges <- edges %>%
+#       filter((fromNode == gene_to_check | toNode == gene_to_check) & weight >= values$thr) # Combine filtering conditions
+# 
+#       if (nrow(filtered_edges) > 0) {
+# 
+#         goi_edge <- data.frame(fromNode = gene_to_check,
+#                                toNode = gene_to_check,
+#                                weight = 1,
+#                                direction = "undirected",
+#                                fromAltName = gene_to_check,
+#                                toAltName = gene_to_check)
+# 
+#         filtered_edges <- rbind(goi_edge, filtered_edges)
+#       }
+# 
+#     filtered_nodes <- data.frame(id = unique(c(filtered_edges$fromNode, filtered_edges$toNode)),
+#                                  # Module = nodes$Module[nodes$nodeName %in% unique(c(filtered_edges$fromNode, filtered_edges$toNode))],
+#                                  # Degree = nodes$Degree[nodes$nodeName %in% unique(c(filtered_edges$fromNode, filtered_edges$toNode))],
+#                                  Edge_weight = filtered_edges$weight) #Nodes are in the same order in node and edge file
+# 
+#     filtered_nodes$nodeID <- match(filtered_nodes$id, unique(filtered_nodes$id)) - 1
+# 
+#     ann <- filtered_nodes %>%
+#       left_join(subannot, by = c("id" = "Gene name")) %>%
+#       separate(Module, c('Module_color', 'Module'), sep = "/") %>%
+#       arrange(desc(Edge_weight)) %>%
+#       dplyr::select(-nodeID, -GOI, -Module_color)
+# 
+#     colnames(ann)[1] <- c("Gene name")
+# 
+#     if (nrow(filtered_edges) > 0) {
+# 
+#     ann[[1]] <- paste0('<a href="https://plantgenie.org/gene?id=', ann[[1]], '" target="_blank">', ann[[1]], '</a>')
+#     }
+#     return(ann)
+# })
 
   # Render Node Table with selectable rows
   observeEvent(input$submit_table, {
   output$node_table <- DT::renderDT({
+    
+    
     req(filtered_nodes_ann())
     print("Rendering table with filtered nodes")# Ensure data is available
     DT::datatable(
@@ -928,8 +1182,8 @@ ui <- fluidPage(
           searching = TRUE,  # Enable search box
           ordering = TRUE,  # Enable column ordering
           dom = 'lfrtip',  # Show length menu, filtering input, and pagination controls
-          columnDefs = list(list(targets = ncol(filtered_nodes_ann()) - 1, orderable = FALSE)),  # Disable ordering on the checkbox column
-          language = list(emptyTable = "Your gene of interest is below the chosen network threshold")  # Custom error message
+          columnDefs = list(list(targets = ncol(filtered_nodes_ann()) - 1, orderable = FALSE))  # Disable ordering on the checkbox column
+          # language = list(emptyTable = "Your gene of interest is below the chosen network threshold")  # Custom error message
         ),
         escape = FALSE,
         selection = 'multiple',
@@ -937,30 +1191,64 @@ ui <- fluidPage(
       )
   })
   })
+  
+  observeEvent(input$submit_table, {
+    # req(values$gene)
+    print("subnetwork created and stored")
+    values$subnetwork <- get_subnetwork(filtered_nodes(), values$gene, values$thr, filtered_edges())
+  })
+  
+  
+  # later::later(function() {
+  #   # observeEvent(input$submit_table, {
+  #   # req(values$gene, values$thr, values$filtered_nodes)
+  #   
+  #   subnetwork_value <- get_subnetwork(
+  #     isolate(values$filtered_nodes), 
+  #     isolate(values$gene),
+  #     isolate(values$thr),
+  #     filtered_edges())
+  #   values$subnetwork <- subnetwork_value
+  #   print("subnetwork created")
+  # }, 0)
+  # })
+  
+  
+
+
 
 
   #Create nodes without links
   filtered_nodes_download <- eventReactive(input$submit_table, {
-    req(filtered_nodes_ann())
+    req(filtered_nodes())
     print("Triggered filtered_nodes_download")
 
-    `Gene name` <- gsub('.*>(.*)<.*', '\\1', filtered_nodes_ann()$`Gene name`)
-    print("Gene names for nodes extracted")
-    cbind(`Gene name`,
-          filtered_nodes_ann() %>%
-            select(!`Gene name`))
+    filtered_nodes() %>% 
+     select(!link)
   })
+  
+  # #Create nodes without links
+  # filtered_nodes_download <- eventReactive(input$submit_table, {
+  #   req(filtered_neigh())
+  #   print("Triggered filtered_nodes_download")
+  #   
+  #   `Gene name` <- gsub('.*>(.*)<.*', '\\1', filtered_nodes_ann()$`Gene name`)
+  #   print("Gene names for nodes extracted")
+  #   cbind(`Gene name`,
+  #         filtered_nodes_ann() %>%
+  #           select(!`Gene name`))
+  # })
 
- #Create edges from table
-  filtered_edges_download <- eventReactive(input$submit_table, {
-    req(filtered_nodes_ann())
-    print("Triggered filtered_edges_download")
-
-    ann_gene_names <- gsub('.*>(.*)<.*', '\\1', filtered_nodes_ann()$`Gene name`)
-    print("Gene names for edges extracted")
-    edges %>%
-      filter(fromNode %in% ann_gene_names & toNode %in% ann_gene_names)
-  })
+ # #Create edges from table
+ #  filtered_edges_download <- eventReactive(input$submit_table, {
+ #    req(filtered_nodes_ann())
+ #    print("Triggered filtered_edges_download")
+ # 
+ #    ann_gene_names <- gsub('.*>(.*)<.*', '\\1', filtered_nodes_ann()$`Gene name`)
+ #    print("Gene names for edges extracted")
+ #    edges %>%
+ #      filter(fromNode %in% ann_gene_names & toNode %in% ann_gene_names)
+ #  })
 
   # Add download handler for node table
   output$download_table <- downloadHandler(
@@ -970,6 +1258,7 @@ ui <- fluidPage(
     content = function(file) {
       write.table(filtered_nodes_download(), file, sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE)
     })
+  
 
   # Add download for edges
   output$download_edges <- downloadHandler(
@@ -977,7 +1266,7 @@ ui <- fluidPage(
       paste(Sys.Date(), "_edges_table_", values$gene, "_thr", values$thr, ".txt", sep = "")
     },
     content = function(file) {
-      write.table(filtered_edges_download(), file, sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE)
+      write.table(values$subnetwork, file, sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE)
     })
 
 
@@ -1001,66 +1290,100 @@ ui <- fluidPage(
       })
 
   # Create a reactive expression to hold the network data
-  network_data <- reactiveVal(NULL)
+  # network_data <- reactiveVal(NULL)
 
   # Observe button click to update network data
-  observeEvent(input$plot_button, {
+  
+  # selected_genes <- c("Potra2n15c28686", "Potra2n18c32228", "Potra2n8c17315")
+  # observeEvent(input$plot_button, {
     # Ensure that inputs are available and valid
-    req(values$gene, values$selected_genes, input$plot_button)
+  
+  network_data <- eventReactive(input$plot_button, {
+    req(values$gene, values$selected_genes, values$subnetwork)
+    # req(values$gene, values$selected_genes, values$subnetwork, input$plot_button)
 
-    selected_genes <- values$selected_genes
-    gene_to_check <- input$gene
+    # selected_genes <- values$selected_genes
+    # gene_to_check <- input$gene
+    
+    print(head(values$subnetwork))
 
-    filtered_edges <- edges %>%
-      filter((fromNode == gene_to_check | toNode == gene_to_check) & weight >= values$thr)
+    # filtered_edges <- edges %>%
+    #   filter((fromNode == gene_to_check | toNode == gene_to_check) & weight >= values$thr)
 
-    if (length(selected_genes) == 0) {
-      filtered_edges_network <- filtered_edges
+    if (length(values$selected_genes) == 0) {
+      filtered_edges_network <- values$subnetwork
     } else {
-      filtered_edges_network <- edges %>%
-        filter(fromNode %in% selected_genes & toNode %in% selected_genes)
+      filtered_edges_network <- values$subnetwork %>%
+        filter(fromNode %in% values$selected_genes & toNode %in% values$selected_genes)
     }
 
-    if (nrow(filtered_edges_network) == 0) {
-      network_data(NULL)  # Set to NULL if no data
-      return(NULL)
-    }
+    # if (nrow(filtered_edges_network) == 0) {
+    #   network_data(NULL)  # Set to NULL if no data
+    #   return(NULL)
+    # }
+# 
+#     filtered_nodes <- data.frame(id = unique(c(subnetwork$fromNode, subnetwork$toNode)))
+#     filtered_nodes$nodeID <- match(filtered_nodes$id, unique(filtered_nodes$id)) - 1
+    
+    
 
-    filtered_nodes <- data.frame(id = unique(c(filtered_edges$fromNode, filtered_edges$toNode)))
-    filtered_nodes$nodeID <- match(filtered_nodes$id, unique(filtered_nodes$id)) - 1
+    filtered_nodes_network <- filtered_nodes() %>% 
+      filter(`Gene name` %in% values$selected_genes) %>% 
+      select(`Gene name`, Centrality, Module) %>% 
+      mutate(nodeID = 1:nrow(.) -1)
+      
+      # selected_genes
+      # 
+      # id = 
+      #                                      
+      #                                      unique(c(filtered_edges_network$fromNode, filtered_edges_network$toNode))) %>% 
+     
+      
+      # nodes %>%
+      # dplyr::select(-c(Degree, Module)) %>%
+      # filter(nodeName %in% unique(c(filtered_edges_network$fromNode, filtered_edges_network$toNode))) %>%
+      # left_join(filtered_nodes, by = c("nodeName" = "id")) %>%
+      # left_join(subannot %>% select(`Gene name`, Centrality, Module), by = c("nodeName" = "Gene name")) %>%
+      # separate(Module, c('Module_color', 'Module'), sep = "/")
+# 
+#     filtered_edges_network$fromNodeID <- match(filtered_edges_network$fromNode, filtered_nodes_network$nodeName) - 1
+#     filtered_edges_network$toNodeID <- match(filtered_edges_network$toNode, filtered_nodes_network$nodeName) - 1
+#     
+    filtered_edges_network$fromNodeID <- match(filtered_edges_network$fromNode, filtered_nodes_network$`Gene name`) - 1
+    filtered_edges_network$toNodeID <- match(filtered_edges_network$toNode, filtered_nodes_network$`Gene name`) - 1
+    
+    print(head(filtered_edges_network))
 
-    filtered_nodes_network <- nodes %>%
-      dplyr::select(-c(Degree, Module)) %>%
-      filter(nodeName %in% unique(c(filtered_edges_network$fromNode, filtered_edges_network$toNode))) %>%
-      left_join(filtered_nodes, by = c("nodeName" = "id")) %>%
-      left_join(subannot %>% select(`Gene name`, Centrality, Module), by = c("nodeName" = "Gene name")) %>%
-      separate(Module, c('Module_color', 'Module'), sep = "/")
-
-    filtered_edges_network$fromNodeID <- match(filtered_edges_network$fromNode, filtered_nodes_network$nodeName) - 1
-    filtered_edges_network$toNodeID <- match(filtered_edges_network$toNode, filtered_nodes_network$nodeName) - 1
-
-    network_data(list(edges = filtered_edges_network, nodes = filtered_nodes_network))
+    list(edges = filtered_edges_network, nodes = filtered_nodes_network)
   })
 
   # Render network plot based on the reactive network_data
   output$network_plot <- renderForceNetwork({
-    network_info <- network_data()
-    req(network_info)  # Ensure network data is available
+    # network_info <- network_data()
+    req(network_data())  # Ensure network data is available
+    
+    color_scale_js <- paste0("d3.scaleOrdinal().domain([", 
+                             paste0("'", legend_colors$Number, "'", collapse = ", "), 
+                             "]).range([", 
+                             paste0("'", legend_colors$Color, "'", collapse = ", "), 
+                             "])")
 
     network_plot <- forceNetwork(
-      Links = network_info$edges,
-      Nodes = network_info$nodes,
+      Links = network_data()$edges,
+      Nodes = network_data()$nodes,
       Source = "fromNodeID",
       Target = "toNodeID",
-      NodeID = "nodeName",
+      NodeID = "Gene name",
       Group = "Module",
       opacity = 0.8,
       zoom = TRUE,
       linkColour = "grey",
-      linkWidth = 2,
+      # linkWidth =  "weight",
+      # linkWidth = 2,
       fontSize = 20,
       linkDistance = 300,
-      colourScale = networkD3::JS('d3.scaleOrdinal().domain(["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46"]).range(["#40E0D0", "#0000FF", "#A52A2A", "#FFFF00", "#00FF00", "#FF0000", "#000000", "#FFC0CB", "#FF00FF", "#A020F0", "#ADFF2F", "#D2B48C", "#FA8072", "#00FFFF", "#191970", "#E0FFFF", "#999999", "#90EE90", "#FFFFE0", "#4169E1", "#8B0000", "#006400", "#00CED1", "#A9A9A9", "#FFA500", "#FF8C00", "#EEE9E9", "#87CEEB", "#8B4513", "#AFEEEE", "#4682B4", "#EE82EE", "#556B2F", "#8B008B", "#CD6839", "#9ACD32", "#6CA6CD", "#FFBBFF", "#8B2500", "#8968CD", "#CAE1FF", "#E0FFFF", "#FFFFF0", "#FFFAF0", "#EE7600", "#8B2323"])'),
+      colourScale = networkD3::JS(color_scale_js),
+        # 'd3.scaleOrdinal().domain(["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46"]).range(["#40E0D0", "#0000FF", "#A52A2A", "#FFFF00", "#00FF00", "#FF0000", "#000000", "#FFC0CB", "#FF00FF", "#A020F0", "#ADFF2F", "#D2B48C", "#FA8072", "#00FFFF", "#191970", "#E0FFFF", "#999999", "#90EE90", "#FFFFE0", "#4169E1", "#8B0000", "#006400", "#00CED1", "#A9A9A9", "#FFA500", "#FF8C00", "#EEE9E9", "#87CEEB", "#8B4513", "#AFEEEE", "#4682B4", "#EE82EE", "#556B2F", "#8B008B", "#CD6839", "#9ACD32", "#6CA6CD", "#FFBBFF", "#8B2500", "#8968CD", "#CAE1FF", "#E0FFFF", "#FFFFF0", "#FFFAF0", "#EE7600", "#8B2323"])'),
       Nodesize = "Centrality",
       legend = FALSE
     )
@@ -1070,595 +1393,656 @@ ui <- fluidPage(
   function(el, x) {
     d3.selectAll(".node circle")
       .style("stroke", "grey")
-      .style("stroke-width", "2px")
+      .style("stroke-width", function(d) { return (d.weight); })
 
     d3.selectAll(".node text")
-      .style("fill", "#B3BAB9");
+      .style("fill", "#000000");
   }
   '
     )
 
     network_plot
   })
+  
+  # numbers <- as.character(1:46)
+  # colors <- c("#40E0D0", "#0000FF", "#A52A2A", "#FFFF00", "#00FF00", "#FF0000", "#000000", "#FFC0CB",
+  #             "#FF00FF", "#A020F0", "#ADFF2F", "#D2B48C", "#FA8072", "#00FFFF", "#191970", "#E0FFFF",
+  #             "#999999", "#90EE90", "#FFFFE0", "#4169E1", "#8B0000", "#006400", "#00CED1", "#A9A9A9",
+  #             "#FFA500", "#FF8C00", "#EEE9E9", "#87CEEB", "#8B4513", "#AFEEEE", "#4682B4", "#EE82EE",
+  #             "#556B2F", "#8B008B", "#CD6839", "#9ACD32", "#6CA6CD", "#FFBBFF", "#8B2500", "#8968CD",
+  #             "#CAE1FF", "#E0FFFF", "#FFFFF0", "#FFFAF0", "#EE7600", "#8B2323")
+  # # 
+  # colors <- c(
+  #   "#FF0000", "#00FF00", "#0000FF", "#FFFF00", "#FF00FF", "#00FFFF",
+  #   "#8B4513", "#A52A2A", "#5F9EA0", "#7FFF00", "#D2691E", "#6495ED",
+  #   "#DC143C", "#00FA9A", "#BDB76B", "#006400", "#8A2BE2", "#FF7F50",
+  #   "#FFD700", "#ADFF2F", "#4B0082", "#00BFFF", "#CD5C5C",
+  #   "#191970", "#2F4F4F",  "#7CFC00", "#FFFACD", "#FF4500", "#FFFAF0",
+  #   "#8B008B", "#556B2F", "#8B0000", "#FFA07A", "#20B2AA", "#87CEEB",
+  #   "#FFE4E1", "#40E0D0", "#B8860B", "#7B68EE", "#EE82EE", "#4682B4",
+  #   "#6A5ACD", "#9932CC", "#708090", "#B0E0E6", "#2E8B57"
+  # )
+  # 
+  # # 
+  # # 
+  # # # Create the data frame
+  # color_df <- data.frame(Number = numbers, Color = colors, stringsAsFactors = FALSE)
+  # 
+  # saveRDS(color_df, "legend_colors.rds")
+  
+  
+  
+ 
 
 
   # Render legend plot
-  output$network_legend <- renderPlot({
-    req(values$gene, values$selected_genes, input$plot_button)
-    suppressWarnings({
-    grid.newpage()
-
-    grid.roundrect(
-      x = 0.6, y = 0.5,
-      width = unit(6, "cm"), height = unit(14.5, "cm"),  # Adjust width and height of the legend background
-      r = unit(0.5, "cm"),  # Set the corner radius, tweak as needed
-      gp = gpar(fill = "#C1D6E0", col = NA)  # Fill color for the legend background
-    )
-    pushViewport(viewport(x = 0.6, y = 0.5, just = "center"))  # Move the legend to the right
-    grid.draw(legend)
-    })
-
-  })
-
-
-#Tab Multiple genes
-  ##From CAST-R app
-
-  # Function to handle gene list creation and validation
-  update_gene_list <- function(values, input, subannot) {
-    if (input$List_gen == "fam") {
-      # validate(
-      #   need(input$TFfamil != "", "Select a TF family before clicking on any button")
-      # )
-      ID <- input$TFfamil
-      ID_list <- filter(subannot, Family %in% ID)
-      values$list_genes <- ID_list$`Gene name`
-    } else if (input$List_gen == "paste") {
-      # validate(
-      #   need(input$Genes_list_Tab2 != "", "Provide a list of genes before clicking on any button")
-      # )
-      values$list_genes <- unlist(strsplit(input$Genes_list_Tab2, "\n"))
-    }
-    print(values$list_genes)
-    return(values$list_genes)
-  }
-
-  # Function to process gene weights and thresholds
-  process_gene_weights <- function(values, edges) {
-    # Initialize error and threshold messages every time the function is called
-    values$error_message_multiple <- NULL
-    values$error_message_multiple2 <- NULL
-    values$threshold_message_multiple <- NULL
-    values$max_weight_mult <- NULL
-    values$max_min_weight_mult <- NULL
-
-    if (is.null(values$list_genes) || any(values$list_genes == "")) {
-      values$error_message_multiple <- "These genes are not in the dataset."
-    } else if (length(values$list_genes) == 1) {
-      values$error_message_multiple <- "Please provide at least two genes."
-    } else {
-      values$error_message_multiple <- NULL
-    }
-
-    # Proceed with the rest of the logic only if there's no error
-    if (is.null(values$error_message_multiple)) {
-      filtered_edges_mult <- edges %>%
-        filter(fromNode %in% values$list_genes | toNode %in% values$list_genes)
-
-      if (is.infinite(max(filtered_edges_mult$weight, na.rm = TRUE))) {
-        values$max_weight_mult <- NULL
-        values$threshold_message_multiple <- "These genes are below the minimum network threshold."
-      } else {
-        max_weight_goi <- filtered_edges_mult %>%
-          gather(key = "type", value = "Gene", fromNode, toNode) %>%
-          filter(Gene %in% values$list_genes) %>%
-          group_by(Gene) %>%
-          summarise(max_weight = max(weight, na.rm = TRUE)) %>%
-          ungroup()
-
-        values$max_weight_mult <- max(max_weight_goi$max_weight, na.rm = TRUE)
-        values$max_min_weight_mult <- min(max_weight_goi$max_weight, na.rm = TRUE)
-        print(values$max_weight_mult)
-        print(values$max_min_weight_mult)
-
-        values$threshold_message_multiple <- paste("The interval of maximum edge weights of your genes of interest is",
-                                                   trunc(values$max_min_weight_mult * 10^2) / 10^2, "-",
-                                                   trunc(values$max_weight_mult * 10^2) / 10^2,
-                                                   ". If the chosen network threshold is higher than the lowest value of the interval, some genes of interest will not be shown in the table or the network. If the chosen network threshold is higher than the highest value of the interval, the table and the network will appear empty.")
-      }
-    }
-    values$thr_mult <- input$weight_thr_multiple
-  }
-
-  # Observe heatmap button
-  observeEvent(input$show_heatmap, {
-    update_gene_list(values, input, subannot)  # Update gene list
-    process_gene_weights(values, edges)          # Process gene weights and thresholds
-  })
-
-  # Observe submit_table_multiple button
-  observeEvent(input$submit_table_multiple, {
-    update_gene_list(values, input, subannot)  # Update gene list
-    process_gene_weights(values, edges)          # Process gene weights and thresholds
-  })
-
-  # Debugging observer
-  observe({
-    print("Observer triggered")  # Debugging: see if observer is triggered
-    print(isolate(values$list_genes))  # Safely print the gene value
-  })
-
-  # Display error message if any
-  output$error_message_multiple <- renderText({
-    values$error_message_multiple
-  })
-
-  observeEvent(input$submit_table_multiple, {
-    values$thr_mult <- input$weight_thr_multiple
-    print(values$thr_mult)
-  })
-
-
-
-  # Render max weight message
-  output$threshold_message_multiple <- renderText({
-    values$threshold_message_multiple
-  })
-
-
-
-  # Reactive expression to generate the heatmap
-  heatmap_data <- reactive({
-    # if (!is.null(values$error_message_multiple2)) {
-    #   return(NULL)
-    # }
-
-    req(input$List_gen)
-    print("Making heatmap data")
-
-    mult <- filter(expression_data, Gene %in% values$list_genes)
-
-    mult <- mult %>%
-      group_by(Gene, `Month/Treatment`) %>%
-      summarize(mean = mean(Expression))
-
-    mult$`Month/Treatment` <- factor(mult$`Month/Treatment`, levels = c("SEP", "OCT", "DEC", "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SD15","CT2","CT8","CT10", "LD1","LD2","LD3", "LD4", "SD1","SD2","SD3","SD10"))
-
-    mult <- mult %>%
-      arrange(`Month/Treatment`) %>%
-      pivot_wider(names_from =  `Month/Treatment`, values_from = mean) %>%
-      column_to_rownames("Gene") %>%
-      mutate(Total = rowSums(.)) %>%
-      filter(Total != 0) %>%
-      select(-Total)
-
-    return(mult)
-  })
-
-  # Observe heatmap generation when button is clicked
-  observeEvent(input$show_heatmap, {
-
-
-    # values$error_message_multiple2 <- NULL
-
-    withProgress(message = 'Generating heatmap...', value = 0, {
-    mult <- heatmap_data()  # Get heatmap data
-    incProgress(0.5)  # Update progress
-
-    # Check the length of input$List_gen
-    if (input$List_gen == "paste" && length(values$list_genes) == 1) {
-      mult <- NULL  # Assign NULL to mult for a single gene
-    }
-
-    if (nrow(mult) == 0 || is.null(mult)) {
-      output$error_message_multiple2 <- renderText({"No data available for the selected genes."})
-
-      # Create a blank heatmap with a message
-      blank_matrix <- matrix(0, nrow = 1, ncol = 1)  # 1x1 matrix to create a blank heatmap
-      colnames(blank_matrix) <- c("")  # Optional: Give a name to the column
-      rownames(blank_matrix) <- c("")  # No row name for blank
-      heatmap <- ComplexHeatmap::pheatmap(mat = blank_matrix,
-                                          border_color = NA,
-                                          color = colorRampPalette(c("dodgerblue", "white", "firebrick"))(10),
-                                          breaks = seq(-1, 1, length.out = 10),
-                                          name = "Expression")
-
-      ht = draw(heatmap)
-      incProgress(0.5)
-      makeInteractiveComplexHeatmap(input, output, session, ht_list = ht)  # Assuming you have a plot output for the heatmap
-      return(NULL)
-    }
-
-    missing_genes <- setdiff(values$list_genes, rownames(mult))
-    if (length(missing_genes) > 0) {
-      output$error_message_multiple2 <- renderText({
-        paste("Some of these genes are not in the dataset:",
-              paste(missing_genes, collapse = ", "),
-              ". The heatmap will be rendered with only the genes that appear in the dataset.")
-      })
-    } else {
-      output$error_message_multiple2 <- renderText(NULL)
-    }
-    # Debugging: print data dimensions and first few rows
-    print(dim(mult))  # Check dimensions of the matrix
-    print(head(mult))  # Check first few rows of the matrix
-
-    annot_col <- data.frame(
-      Tissue   = samples.sep$Tissue,
-      `Month/Treatment` = samples.sep$`Month/Treatment`,
-      Location = samples.sep$Location,
-      check.names = FALSE) %>%
+  observeEvent(input$plot_button, {
+    req(values$gene, values$selected_genes, network_data())
+    
+    df <-  network_data()$nodes %>%
+      select(Module) %>%
+      left_join(legend_colors, by = c("Module" = "Number")) %>%
       unique()
-    rownames(annot_col) <- colnames(mult)
-    annot_col$`Month/Treatment` <- factor(annot_col$`Month/Treatment`, levels = c("SEP",
-                                                                                  "OCT",
-                                                                                  "DEC",
-                                                                                  "JAN",
-                                                                                  "FEB",
-                                                                                  "MAR",
-                                                                                  "APR",
-                                                                                  "MAY",
-                                                                                  "JUN",
-                                                                                  "JUL",
-                                                                                  "AUG",
-                                                                                  "SD15","CT2","CT8","CT10",
-                                                                                  "LD1","LD2","LD3", "LD4",
-                                                                                  "SD1","SD2","SD3","SD10"))
-    annot_col$Location <- factor(annot_col$Location, levels = c("Outdoor",
-                                                                "Indoor"))
-
-
-    vals <- unique(samples.sep$Location)
-    location_map <- gg_color_hue(length(vals))
-    names(location_map) <- vals
-
-    month_palette <- rev(colorRampPalette(brewer.pal(n = 9, name = "YlGnBu"))(11))
-    treatment_palette <- rev(colorRampPalette(brewer.pal(n = 9, name = "YlGnBu"))(12))
-
-    annot_colors = list(
-      Location = location_map,
-      Tissue   = c(Bud = "chocolate", Leaf = "darkgreen"),
-      `Month/Treatment` = c(
-        SEP = month_palette[1],
-        OCT = month_palette[2],
-        DEC = month_palette[3],
-        JAN = month_palette[4],
-        FEB = month_palette[5],
-        MAR = month_palette[6],
-        APR = month_palette[7],
-        MAY = month_palette[8],
-        JUN = month_palette[9],
-        JUL = month_palette[10],
-        AUG = month_palette[11],
-        SD15 = treatment_palette[1],
-        CT2 = treatment_palette[2],
-        CT8 = treatment_palette[3],
-        CT10 = treatment_palette[4],
-        LD1 = treatment_palette[5],
-        LD2 = treatment_palette[6],
-        LD3 = treatment_palette[7],
-        LD4 = treatment_palette[8],
-        SD1 = treatment_palette[9],
-        SD2 = treatment_palette[10],
-        SD3 = treatment_palette[11],
-        SD10 = treatment_palette[12]
-       )
-    )
-    print("Annotation colors saved")
-
-    if(nrow(mult) == 1) {
-      heatmap <- ComplexHeatmap::pheatmap(mat = as.matrix(mult),
-                                          cluster_rows = FALSE,
-                                          cluster_cols = FALSE, #dist.var.tree.GLOBAL,
-                                          scale = "row",
-                                          legend = TRUE,
-                                          border_color = NA,
-                                          color = colorRampPalette(c("dodgerblue","white","firebrick"))(10),
-                                          fontsize = 30,
-                                          fontsize_row = 14,
-                                          fontsize_col = 12,
-                                          # srtCol = 45,
-                                          show_rownames = TRUE,
-                                          show_colnames = FALSE,
-                                          #labels_col = names,
-                                          annotation_legend = TRUE,
-                                          annotation_col = annot_col,
-                                          #annotation_row = annot_row,
-                                          annotation_colors = annot_colors,
-                                          name = "Expression")
-      ht = draw(heatmap)
-      incProgress(0.5)
-      makeInteractiveComplexHeatmap(input, output, session, ht_list = ht)
-    } else {
-
-
-    dist.obs <- as.dist(1-cor(t(mult)))
-    dist.obs.tree <- hclust(dist.obs, method = "ward.D")
-
-    heatmap <- ComplexHeatmap::pheatmap(mat = as.matrix(mult),
-                                        cluster_rows = dist.obs.tree,
-                                        cluster_cols = FALSE, #dist.var.tree.GLOBAL,
-                                        scale = "row",
-                                        legend = TRUE,
-                                        border_color = NA,
-                                        color = colorRampPalette(c("dodgerblue","white","firebrick"))(10),
-                                        fontsize = 30,
-                                        fontsize_row = 10,
-                                        fontsize_col = 12,
-                                        # srtCol = 45,
-                                        show_rownames = TRUE,
-                                        show_colnames = FALSE,
-                                        #labels_col = names,
-                                        annotation_legend = TRUE,
-                                        annotation_col = annot_col,
-                                        #annotation_row = annot_row,
-                                        annotation_colors = annot_colors,
-                                        name = "Expression")
-    ht = draw(heatmap)
-    # Draw the heatmap and make it interactive
-    incProgress(0.5)  # Update progress
-    makeInteractiveComplexHeatmap(input, output, session, ht_list = ht)
-    }
+    
+    df <- df %>%
+      mutate(x = 1,
+             y = 1:nrow(df))
+    
+    plot_leg <- ggplot(df, aes(x, y, color = Module)) +
+      geom_point() +
+      scale_color_manual(values = unique(df$Color), name = "Module") +
+      # scale_color_manual(name = "Modules",
+      #                    values = c(
+      #
+      #                      # "grey", "turquoise", "blue", "brown", "yellow","green","red",  "black", "pink", "magenta", "purple", "greenyellow", "tan", "salmon", "cyan", "midnightblue", "lightcyan", "grey60", "lightgreen",
+      #                      #          "lightyellow", "royalblue", "darkred", "darkgreen", "darkturquoise","darkgrey", "orange", "darkorange", "white","skyblue", "saddlebrown", "paleturquoise", "steelblue", "violet", "darkolivegreen", "darkmagenta", "sienna3", "yellowgreen", "skyblue3",
+      #                      #          "plum1", "orangered4", "mediumpurple3", "lightsteelblue1", "lightcyan1", "ivory", "floralwhite", "darkorange2", "brown4")) +
+      guides(color = guide_legend(override.aes = list(size = 4))) +
+      theme_classic() +
+      theme(
+        legend.key = element_rect(fill = "#C1D6E0"),
+        legend.background = element_rect(fill = "#C1D6E0"),
+        legend.title = element_text(size = 24, family = "lato", face = "bold"),
+        legend.text = element_text(size = 20, family = "lato"),
+        legend.key.size = unit(2, 'cm'))
+    
+    values$legend_data <- cowplot::get_legend(plot_leg)
+    
   })
-})
-
-  output$plot_multiple_footnote <-renderText({
-    paste("<p style='text-align:justify'>","Expression data in VST counts. SD: short day. CT: cold treatment. LD: long day. The number shown is the number of weeks in the treatment. Data are means for n = 6 biological replicates.", "</p>"
-    )
-  })
-
-  observeEvent(input$show_heatmap, {
-    print("submit_table_multiple observed")
-    output$node_table_multiple <- DT::renderDT({
-      # Create an empty dataframe with the same structure as filtered_nodes_ann
-      empty_df <- data.frame("Gene name" = character(),
-                             "Module" = character(),
-                             "Centrality" = numeric(),
-                             "ATG symbol" = character(),
-                             "ATG full name" = character(),
-                             stringsAsFactors = FALSE)
-      DT::datatable(empty_df)
-    })
-  })
-
-  #Make table with selected gene and 1st neighbours
-  filtered_edges_mult <- eventReactive(input$submit_table_multiple, {
-    print(paste("submit_table_multiple triggered"))
-    print("Rendering data for edges multiple")
-    print(values$list_genes)
-    print(values$thr_mult)
-
-    req(input$List_gen)
-    filtered_edges_mult <- edges %>%
-           filter((fromNode %in% values$list_genes | toNode %in% values$list_genes) & weight >= values$thr_mult)
-
-    if (nrow(filtered_edges_mult) > 0) {
-
-      goi_edge_mult <- data.frame(fromNode =  values$list_genes[values$list_genes %in% unique(c(filtered_edges_mult$fromNode, filtered_edges_mult$toNode))],
-                                  toNode = values$list_genes[values$list_genes %in% unique(c(filtered_edges_mult$fromNode, filtered_edges_mult$toNode))],
-                                  weight = 1,
-                                  direction = "undirected",
-                                  fromAltName = values$list_genes[values$list_genes %in% unique(c(filtered_edges_mult$fromNode, filtered_edges_mult$toNode))],
-                                  toAltName = values$list_genes[values$list_genes %in% unique(c(filtered_edges_mult$fromNode, filtered_edges_mult$toNode))])
-
-      filtered_edges_mult <- rbind(goi_edge_mult, filtered_edges_mult)
-    }
-    head(filtered_edges_mult)
-    return(filtered_edges_mult)
-
-  })
-
-  filtered_nodes_ann_mult <- eventReactive(input$submit_table_multiple, {
-    print(paste("submit_table_multiple triggered2"))
-    print("Rendering data for table multiple")
-    req(input$List_gen)
-
-    filtered_edges_data <- filtered_edges_mult()
-
-    filtered_nodes_mult <- data.frame(id = unique(c(filtered_edges_data$fromNode, filtered_edges_data$toNode)))
-
-    filtered_nodes_mult$nodeID <- match(filtered_nodes_mult$id, unique(filtered_nodes_mult$id)) - 1
-
-    ann_mult1 <- filtered_nodes_mult %>%
-      filter(id %in% values$list_genes) %>%
-      left_join(subannot, by = c("id" = "Gene name")) %>%
-      separate(Module, c('Module_color', 'Module'), sep = "/") %>%
-      arrange(desc(Centrality))
-
-    ann_mult2 <- filtered_nodes_mult %>%
-      filter(!(id %in% values$list_genes)) %>%
-      left_join(subannot, by = c("id" = "Gene name")) %>%
-      separate(Module, c('Module_color', 'Module'), sep = "/") %>%
-      arrange(desc(Centrality))
-
-    ann_mult <- rbind(ann_mult1, ann_mult2) %>%
-      dplyr::select(-nodeID, -GOI, -Module_color)
-
-    colnames(ann_mult)[1] <- c("Gene name")
-
-    if (nrow(filtered_edges_mult()) > 0) {
-
-      ann_mult[[1]] <- paste0('<a href="https://plantgenie.org/gene?id=', ann_mult[[1]], '" target="_blank">', ann_mult[[1]], '</a>')
-    }
-    head(ann_mult)
-    return(ann_mult)
-
-  })
-
-  # Render Node Table with selectable rows
-  observeEvent(input$submit_table_multiple, {
-    output$node_table_multiple <- DT::renderDT({
-      req(filtered_nodes_ann_mult())
-      print("Rendering table with filtered nodes")# Ensure data is available
-      DT::datatable(
-        filtered_nodes_ann_mult(),
-        options = list(
-          pageLength = 10,  # Show 10 rows per page by default
-          lengthMenu = list(c(10, 15, 20, -1), c('10', '15', '20', 'All')),  # Options to show 10, 15, 20 or all rows
-          #order = list(list(1, 'desc')),  # Order by the first column initially
-          searching = TRUE,  # Enable search box
-          ordering = TRUE,  # Enable column ordering
-          dom = 'lfrtip',  # Show length menu, filtering input, and pagination controls
-          columnDefs = list(list(targets = ncol(filtered_nodes_ann_mult()) - 1, orderable = FALSE)),  # Disable ordering on the checkbox column
-          language = list(emptyTable = "Your genes of interest are below the chosen network threshold")  # Custom error message
-        ),
-        escape = FALSE,
-        selection = 'multiple',
-        rownames = FALSE
-      )
-    })
-  })
-
-  #Create nodes without links
-  filtered_nodes_mult_download <- eventReactive(input$submit_table_multiple, {
-    req(filtered_nodes_ann_mult())
-
-    `Gene name` <- gsub('.*>(.*)<.*', '\\1', filtered_nodes_ann_mult()$`Gene name`)
-    cbind(`Gene name`,
-          filtered_nodes_ann_mult() %>%
-            select(!`Gene name`))
-  })
-
-  filtered_edges_mult_download <- eventReactive(input$submit_table_multiple, {
-    req(filtered_nodes_ann_mult())
-
-    ann_gene_names_mult <- gsub('.*>(.*)<.*', '\\1', filtered_nodes_ann_mult()$`Gene name`)
-    edges %>%
-      filter(fromNode %in% ann_gene_names_mult & toNode %in% ann_gene_names_mult)
-  })
-
-  # Add download handler for node table
-  output$download_table_multiple <- downloadHandler(
-    filename = function() {
-      paste(Sys.Date(), "_node_table_multiple_genes","_thr", values$thr_mult, ".txt", sep = "")
-    },
-    content = function(file) {
-      write.table(filtered_nodes_mult_download(), file, sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE)
-    })
-
-  # Add download for edges
-  output$download_edges_multiple <- downloadHandler(
-    filename = function() {
-      paste(Sys.Date(), "_edges_table_multiple_genes", "_thr", values$thr_mult, ".txt", sep = "")
-    },
-    content = function(file) {
-      write.table(filtered_edges_mult_download(), file, sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE)
-    })
-
-# Update selected genes when plot button is clicked
-  observeEvent(input$plot_button_multiple, {
-    req(input$submit_table_multiple, values$thr_mult, input$List_gen)
-
-    selected_rows <- input$node_table_multiple_rows_selected #???
-    if (!is.null(selected_rows)) {
-      # Extract the gene names and apply gsub to each element individually
-      gene_names <- filtered_nodes_ann_mult()[selected_rows, "Gene name"]
-
-      # Use sapply to apply gsub to each gene name in the vector
-      values$selected_genes_mult <- sapply(gene_names, function(x) gsub('.*>(.*)<.*', '\\1', x))
-    } else {
-      values$selected_genes_mult <- NULL
-    }
-    print(paste("Selected genes: ", paste(values$selected_genes_mult, collapse = ", ")))
-  })
-
-  # Create a reactive expression to hold the network data
-  network_data_mult <- reactiveVal(NULL)
-
-  # Observe button click to update network data
-    observeEvent(input$plot_button_multiple, {
-    # Ensure that inputs are available and valid
-    req(values$selected_genes_mult, input$plot_button_multiple, input$List_gen)
-
-    filtered_edges_data <- filtered_edges_mult()
-
-    selected_genes <- values$selected_genes_mult
-    # print(selected_genes)
-    # selected_genes <-c("Potra2n8c17315", "Potra2n10c20839")
-
-    if (length(selected_genes) == 0) {
-      filtered_edges_network <- filtered_edges_data
-    } else {
-      filtered_edges_network <- edges %>%
-        filter(fromNode %in% selected_genes & toNode %in% selected_genes)
-    }
-
-    if (nrow(filtered_edges_network) == 0) {
-      network_data_mult(NULL)  # Set to NULL if no data
-      return(NULL)
-    }
-
-
-    filtered_nodes <- data.frame(id = unique(c(filtered_edges_data$fromNode, filtered_edges_data$toNode)))
-    filtered_nodes$nodeID <- match(filtered_nodes$id, unique(filtered_nodes$id)) - 1
-
-    filtered_nodes_network <- nodes %>%
-      dplyr::select(-c(Degree, Module)) %>%
-      filter(nodeName %in% unique(c(filtered_edges_network$fromNode, filtered_edges_network$toNode))) %>%
-      left_join(filtered_nodes, by = c("nodeName" = "id")) %>%
-      left_join(subannot %>% select(`Gene name`, Centrality, Module), by = c("nodeName" = "Gene name")) %>%
-      separate(Module, c('Module_color', 'Module'), sep = "/")
-
-    filtered_edges_network$fromNodeID <- match(filtered_edges_network$fromNode, filtered_nodes_network$nodeName) - 1
-    filtered_edges_network$toNodeID <- match(filtered_edges_network$toNode, filtered_nodes_network$nodeName) - 1
-
-    network_data_mult(list(edges = filtered_edges_network, nodes = filtered_nodes_network))
-  })
-
-  # Render network plot based on the reactive network_data
-  output$network_plot_multiple <- renderForceNetwork({
-    network_info <- network_data_mult()
-    req(network_info)  # Ensure network data is available
-
-    network_plot <- forceNetwork(
-      Links = network_info$edges,
-      Nodes = network_info$nodes,
-      Source = "fromNodeID",
-      Target = "toNodeID",
-      NodeID = "nodeName",
-      Group = "Module",
-      opacity = 0.8,
-      zoom = TRUE,
-      linkColour = "grey",
-      linkWidth = 2,
-      fontSize = 20,
-      linkDistance = 400,
-      colourScale = networkD3::JS('d3.scaleOrdinal().domain(["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46"]).range(["#40E0D0", "#0000FF", "#A52A2A", "#FFFF00", "#00FF00", "#FF0000", "#000000", "#FFC0CB", "#FF00FF", "#A020F0", "#ADFF2F", "#D2B48C", "#FA8072", "#00FFFF", "#191970", "#E0FFFF", "#999999", "#90EE90", "#FFFFE0", "#4169E1", "#8B0000", "#006400", "#00CED1", "#A9A9A9", "#FFA500", "#FF8C00", "#EEE9E9", "#87CEEB", "#8B4513", "#AFEEEE", "#4682B4", "#EE82EE", "#556B2F", "#8B008B", "#CD6839", "#9ACD32", "#6CA6CD", "#FFBBFF", "#8B2500", "#8968CD", "#CAE1FF", "#E0FFFF", "#FFFFF0", "#FFFAF0", "#EE7600", "#8B2323"])'),
-      Nodesize = "Centrality",
-      legend = FALSE
-    )
-    network_plot <- htmlwidgets::onRender(
-      network_plot,
-      '
-  function(el, x) {
-    d3.selectAll(".node circle")
-      .style("stroke", "grey")
-      .style("stroke-width", "2px")
-
-    d3.selectAll(".node text")
-      .style("fill", "#B3BAB9");
-  }
-  '
-    )
-
-    network_plot
-  })
-
-  # Render legend plot
-  output$network_legend_multiple <- renderPlot({
-    req(values$selected_genes_mult, input$plot_button_multiple)
-    suppressWarnings({
+  
+  output$network_legend <- renderPlot({
+    req(values$legend_data, input$plot_button)
     grid.newpage()
-    grid.roundrect(
-      x = 0.6, y = 0.5,
-      width = unit(6, "cm"), height = unit(14.5, "cm"),  # Adjust width and height of the legend background
-      r = unit(0.5, "cm"),  # Set the corner radius, tweak as needed
-      gp = gpar(fill = "#C1D6E0", col = NA)  # Fill color for the legend background
-    )
+
+    # grid.roundrect(
+    #   x = 0.3, y = 0.2,
+    #   width = unit(2, "cm"), height = unit(5, "cm"),  # Adjust width and height of the legend background
+    #   r = unit(0.5, "cm"),  # Set the corner radius, tweak as needed
+    #   gp = gpar(fill = "#C1D6E0", col = NA)  # Fill color for the legend background
+    # )
     pushViewport(viewport(x = 0.6, y = 0.5, just = "center"))  # Move the legend to the right
-    grid.draw(legend)
-    })
+    grid.draw(values$legend_data)
   })
+ 
+# 
+# #Tab Multiple genes
+#   ##From CAST-R app
+# 
+#   # Function to handle gene list creation and validation
+#   update_gene_list <- function(values, input, subannot) {
+#     if (input$List_gen == "fam") {
+#       # validate(
+#       #   need(input$TFfamil != "", "Select a TF family before clicking on any button")
+#       # )
+#       ID <- input$TFfamil
+#       ID_list <- filter(subannot, Family %in% ID)
+#       values$list_genes <- ID_list$`Gene name`
+#     } else if (input$List_gen == "paste") {
+#       # validate(
+#       #   need(input$Genes_list_Tab2 != "", "Provide a list of genes before clicking on any button")
+#       # )
+#       values$list_genes <- unlist(strsplit(input$Genes_list_Tab2, "\n"))
+#     }
+#     print(values$list_genes)
+#     return(values$list_genes)
+#   }
+# 
+#   # Function to process gene weights and thresholds
+#   process_gene_weights <- function(values, edges) {
+#     # Initialize error and threshold messages every time the function is called
+#     values$error_message_multiple <- NULL
+#     values$error_message_multiple2 <- NULL
+#     values$threshold_message_multiple <- NULL
+#     values$max_weight_mult <- NULL
+#     values$max_min_weight_mult <- NULL
+# 
+#     if (is.null(values$list_genes) || any(values$list_genes == "")) {
+#       values$error_message_multiple <- "These genes are not in the dataset."
+#     } else if (length(values$list_genes) == 1) {
+#       values$error_message_multiple <- "Please provide at least two genes."
+#     } else {
+#       values$error_message_multiple <- NULL
+#     }
+# 
+#     # Proceed with the rest of the logic only if there's no error
+#     if (is.null(values$error_message_multiple)) {
+#       filtered_edges_mult <- edges %>%
+#         filter(fromNode %in% values$list_genes | toNode %in% values$list_genes)
+# 
+#       if (is.infinite(max(filtered_edges_mult$weight, na.rm = TRUE))) {
+#         values$max_weight_mult <- NULL
+#         values$threshold_message_multiple <- "These genes are below the minimum network threshold."
+#       } else {
+#         max_weight_goi <- filtered_edges_mult %>%
+#           gather(key = "type", value = "Gene", fromNode, toNode) %>%
+#           filter(Gene %in% values$list_genes) %>%
+#           group_by(Gene) %>%
+#           summarise(max_weight = max(weight, na.rm = TRUE)) %>%
+#           ungroup()
+# 
+#         values$max_weight_mult <- max(max_weight_goi$max_weight, na.rm = TRUE)
+#         values$max_min_weight_mult <- min(max_weight_goi$max_weight, na.rm = TRUE)
+#         print(values$max_weight_mult)
+#         print(values$max_min_weight_mult)
+# 
+#         values$threshold_message_multiple <- paste("The interval of maximum edge weights of your genes of interest is",
+#                                                    trunc(values$max_min_weight_mult * 10^2) / 10^2, "-",
+#                                                    trunc(values$max_weight_mult * 10^2) / 10^2,
+#                                                    ". If the chosen network threshold is higher than the lowest value of the interval, some genes of interest will not be shown in the table or the network. If the chosen network threshold is higher than the highest value of the interval, the table and the network will appear empty.")
+#       }
+#     }
+#     values$thr_mult <- input$weight_thr_multiple
+#   }
+# 
+#   # Observe heatmap button
+#   observeEvent(input$show_heatmap, {
+#     update_gene_list(values, input, subannot)  # Update gene list
+#     process_gene_weights(values, edges)          # Process gene weights and thresholds
+#   })
+# 
+#   # Observe submit_table_multiple button
+#   observeEvent(input$submit_table_multiple, {
+#     update_gene_list(values, input, subannot)  # Update gene list
+#     process_gene_weights(values, edges)          # Process gene weights and thresholds
+#   })
+# 
+#   # Debugging observer
+#   observe({
+#     print("Observer triggered")  # Debugging: see if observer is triggered
+#     print(isolate(values$list_genes))  # Safely print the gene value
+#   })
+# 
+#   # Display error message if any
+#   output$error_message_multiple <- renderText({
+#     values$error_message_multiple
+#   })
+# 
+#   observeEvent(input$submit_table_multiple, {
+#     values$thr_mult <- input$weight_thr_multiple
+#     print(values$thr_mult)
+#   })
+# 
+# 
+# 
+#   # Render max weight message
+#   output$threshold_message_multiple <- renderText({
+#     values$threshold_message_multiple
+#   })
+# 
+# 
+# 
+#   # Reactive expression to generate the heatmap
+#   heatmap_data <- reactive({
+#     # if (!is.null(values$error_message_multiple2)) {
+#     #   return(NULL)
+#     # }
+# 
+#     req(input$List_gen)
+#     print("Making heatmap data")
+# 
+#     mult <- filter(expression_data, Gene %in% values$list_genes)
+# 
+#     mult <- mult %>%
+#       group_by(Gene, `Month/Treatment`) %>%
+#       summarize(mean = mean(Expression))
+# 
+#     mult$`Month/Treatment` <- factor(mult$`Month/Treatment`, levels = c("SEP", "OCT", "DEC", "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SD15","CT2","CT8","CT10", "LD1","LD2","LD3", "LD4", "SD1","SD2","SD3","SD10"))
+# 
+#     mult <- mult %>%
+#       arrange(`Month/Treatment`) %>%
+#       pivot_wider(names_from =  `Month/Treatment`, values_from = mean) %>%
+#       column_to_rownames("Gene") %>%
+#       mutate(Total = rowSums(.)) %>%
+#       filter(Total != 0) %>%
+#       select(-Total)
+# 
+#     return(mult)
+#   })
+# 
+#   # Observe heatmap generation when button is clicked
+#   observeEvent(input$show_heatmap, {
+# 
+# 
+#     # values$error_message_multiple2 <- NULL
+# 
+#     withProgress(message = 'Generating heatmap...', value = 0, {
+#     mult <- heatmap_data()  # Get heatmap data
+#     incProgress(0.5)  # Update progress
+# 
+#     # Check the length of input$List_gen
+#     if (input$List_gen == "paste" && length(values$list_genes) == 1) {
+#       mult <- NULL  # Assign NULL to mult for a single gene
+#     }
+# 
+#     if (nrow(mult) == 0 || is.null(mult)) {
+#       output$error_message_multiple2 <- renderText({"No data available for the selected genes."})
+# 
+#       # Create a blank heatmap with a message
+#       blank_matrix <- matrix(0, nrow = 1, ncol = 1)  # 1x1 matrix to create a blank heatmap
+#       colnames(blank_matrix) <- c("")  # Optional: Give a name to the column
+#       rownames(blank_matrix) <- c("")  # No row name for blank
+#       heatmap <- ComplexHeatmap::pheatmap(mat = blank_matrix,
+#                                           border_color = NA,
+#                                           color = colorRampPalette(c("dodgerblue", "white", "firebrick"))(10),
+#                                           breaks = seq(-1, 1, length.out = 10),
+#                                           name = "Expression")
+# 
+#       ht = draw(heatmap)
+#       incProgress(0.5)
+#       makeInteractiveComplexHeatmap(input, output, session, ht_list = ht)  # Assuming you have a plot output for the heatmap
+#       return(NULL)
+#     }
+# 
+#     missing_genes <- setdiff(values$list_genes, rownames(mult))
+#     if (length(missing_genes) > 0) {
+#       output$error_message_multiple2 <- renderText({
+#         paste("Some of these genes are not in the dataset:",
+#               paste(missing_genes, collapse = ", "),
+#               ". The heatmap will be rendered with only the genes that appear in the dataset.")
+#       })
+#     } else {
+#       output$error_message_multiple2 <- renderText(NULL)
+#     }
+#     # Debugging: print data dimensions and first few rows
+#     print(dim(mult))  # Check dimensions of the matrix
+#     print(head(mult))  # Check first few rows of the matrix
+# 
+#     annot_col <- data.frame(
+#       Tissue   = samples.sep$Tissue,
+#       `Month/Treatment` = samples.sep$`Month/Treatment`,
+#       Location = samples.sep$Location,
+#       check.names = FALSE) %>%
+#       unique()
+#     rownames(annot_col) <- colnames(mult)
+#     annot_col$`Month/Treatment` <- factor(annot_col$`Month/Treatment`, levels = c("SEP",
+#                                                                                   "OCT",
+#                                                                                   "DEC",
+#                                                                                   "JAN",
+#                                                                                   "FEB",
+#                                                                                   "MAR",
+#                                                                                   "APR",
+#                                                                                   "MAY",
+#                                                                                   "JUN",
+#                                                                                   "JUL",
+#                                                                                   "AUG",
+#                                                                                   "SD15","CT2","CT8","CT10",
+#                                                                                   "LD1","LD2","LD3", "LD4",
+#                                                                                   "SD1","SD2","SD3","SD10"))
+#     annot_col$Location <- factor(annot_col$Location, levels = c("Outdoor",
+#                                                                 "Indoor"))
+# 
+# 
+#     vals <- unique(samples.sep$Location)
+#     location_map <- gg_color_hue(length(vals))
+#     names(location_map) <- vals
+# 
+#     month_palette <- rev(colorRampPalette(brewer.pal(n = 9, name = "YlGnBu"))(11))
+#     treatment_palette <- rev(colorRampPalette(brewer.pal(n = 9, name = "YlGnBu"))(12))
+# 
+#     annot_colors = list(
+#       Location = location_map,
+#       Tissue   = c(Bud = "chocolate", Leaf = "darkgreen"),
+#       `Month/Treatment` = c(
+#         SEP = month_palette[1],
+#         OCT = month_palette[2],
+#         DEC = month_palette[3],
+#         JAN = month_palette[4],
+#         FEB = month_palette[5],
+#         MAR = month_palette[6],
+#         APR = month_palette[7],
+#         MAY = month_palette[8],
+#         JUN = month_palette[9],
+#         JUL = month_palette[10],
+#         AUG = month_palette[11],
+#         SD15 = treatment_palette[1],
+#         CT2 = treatment_palette[2],
+#         CT8 = treatment_palette[3],
+#         CT10 = treatment_palette[4],
+#         LD1 = treatment_palette[5],
+#         LD2 = treatment_palette[6],
+#         LD3 = treatment_palette[7],
+#         LD4 = treatment_palette[8],
+#         SD1 = treatment_palette[9],
+#         SD2 = treatment_palette[10],
+#         SD3 = treatment_palette[11],
+#         SD10 = treatment_palette[12]
+#        )
+#     )
+#     print("Annotation colors saved")
+# 
+#     if(nrow(mult) == 1) {
+#       heatmap <- ComplexHeatmap::pheatmap(mat = as.matrix(mult),
+#                                           cluster_rows = FALSE,
+#                                           cluster_cols = FALSE, #dist.var.tree.GLOBAL,
+#                                           scale = "row",
+#                                           legend = TRUE,
+#                                           border_color = NA,
+#                                           color = colorRampPalette(c("dodgerblue","white","firebrick"))(10),
+#                                           fontsize = 30,
+#                                           fontsize_row = 14,
+#                                           fontsize_col = 12,
+#                                           # srtCol = 45,
+#                                           show_rownames = TRUE,
+#                                           show_colnames = FALSE,
+#                                           #labels_col = names,
+#                                           annotation_legend = TRUE,
+#                                           annotation_col = annot_col,
+#                                           #annotation_row = annot_row,
+#                                           annotation_colors = annot_colors,
+#                                           name = "Expression")
+#       ht = draw(heatmap)
+#       incProgress(0.5)
+#       makeInteractiveComplexHeatmap(input, output, session, ht_list = ht)
+#     } else {
+# 
+# 
+#     dist.obs <- as.dist(1-cor(t(mult)))
+#     dist.obs.tree <- hclust(dist.obs, method = "ward.D")
+# 
+#     heatmap <- ComplexHeatmap::pheatmap(mat = as.matrix(mult),
+#                                         cluster_rows = dist.obs.tree,
+#                                         cluster_cols = FALSE, #dist.var.tree.GLOBAL,
+#                                         scale = "row",
+#                                         legend = TRUE,
+#                                         border_color = NA,
+#                                         color = colorRampPalette(c("dodgerblue","white","firebrick"))(10),
+#                                         fontsize = 30,
+#                                         fontsize_row = 10,
+#                                         fontsize_col = 12,
+#                                         # srtCol = 45,
+#                                         show_rownames = TRUE,
+#                                         show_colnames = FALSE,
+#                                         #labels_col = names,
+#                                         annotation_legend = TRUE,
+#                                         annotation_col = annot_col,
+#                                         #annotation_row = annot_row,
+#                                         annotation_colors = annot_colors,
+#                                         name = "Expression")
+#     ht = draw(heatmap)
+#     # Draw the heatmap and make it interactive
+#     incProgress(0.5)  # Update progress
+#     makeInteractiveComplexHeatmap(input, output, session, ht_list = ht)
+#     }
+#   })
+# })
+# 
+#   output$plot_multiple_footnote <-renderText({
+#     paste("<p style='text-align:justify'>","Expression data in VST counts. SD: short day. CT: cold treatment. LD: long day. The number shown is the number of weeks in the treatment. Data are means for n = 6 biological replicates.", "</p>"
+#     )
+#   })
+# 
+#   observeEvent(input$show_heatmap, {
+#     print("submit_table_multiple observed")
+#     output$node_table_multiple <- DT::renderDT({
+#       # Create an empty dataframe with the same structure as filtered_nodes_ann
+#       empty_df <- data.frame("Gene name" = character(),
+#                              "Module" = character(),
+#                              "Centrality" = numeric(),
+#                              "ATG symbol" = character(),
+#                              "ATG full name" = character(),
+#                              stringsAsFactors = FALSE)
+#       DT::datatable(empty_df)
+#     })
+#   })
+# 
+#   #Make table with selected gene and 1st neighbours
+#   filtered_edges_mult <- eventReactive(input$submit_table_multiple, {
+#     print(paste("submit_table_multiple triggered"))
+#     print("Rendering data for edges multiple")
+#     print(values$list_genes)
+#     print(values$thr_mult)
+# 
+#     req(input$List_gen)
+#     filtered_edges_mult <- edges %>%
+#            filter((fromNode %in% values$list_genes | toNode %in% values$list_genes) & weight >= values$thr_mult)
+# 
+#     if (nrow(filtered_edges_mult) > 0) {
+# 
+#       goi_edge_mult <- data.frame(fromNode =  values$list_genes[values$list_genes %in% unique(c(filtered_edges_mult$fromNode, filtered_edges_mult$toNode))],
+#                                   toNode = values$list_genes[values$list_genes %in% unique(c(filtered_edges_mult$fromNode, filtered_edges_mult$toNode))],
+#                                   weight = 1,
+#                                   direction = "undirected",
+#                                   fromAltName = values$list_genes[values$list_genes %in% unique(c(filtered_edges_mult$fromNode, filtered_edges_mult$toNode))],
+#                                   toAltName = values$list_genes[values$list_genes %in% unique(c(filtered_edges_mult$fromNode, filtered_edges_mult$toNode))])
+# 
+#       filtered_edges_mult <- rbind(goi_edge_mult, filtered_edges_mult)
+#     }
+#     head(filtered_edges_mult)
+#     return(filtered_edges_mult)
+# 
+#   })
+# 
+#   filtered_nodes_ann_mult <- eventReactive(input$submit_table_multiple, {
+#     print(paste("submit_table_multiple triggered2"))
+#     print("Rendering data for table multiple")
+#     req(input$List_gen)
+# 
+#     filtered_edges_data <- filtered_edges_mult()
+# 
+#     filtered_nodes_mult <- data.frame(id = unique(c(filtered_edges_data$fromNode, filtered_edges_data$toNode)))
+# 
+#     filtered_nodes_mult$nodeID <- match(filtered_nodes_mult$id, unique(filtered_nodes_mult$id)) - 1
+# 
+#     ann_mult1 <- filtered_nodes_mult %>%
+#       filter(id %in% values$list_genes) %>%
+#       left_join(subannot, by = c("id" = "Gene name")) %>%
+#       separate(Module, c('Module_color', 'Module'), sep = "/") %>%
+#       arrange(desc(Centrality))
+# 
+#     ann_mult2 <- filtered_nodes_mult %>%
+#       filter(!(id %in% values$list_genes)) %>%
+#       left_join(subannot, by = c("id" = "Gene name")) %>%
+#       separate(Module, c('Module_color', 'Module'), sep = "/") %>%
+#       arrange(desc(Centrality))
+# 
+#     ann_mult <- rbind(ann_mult1, ann_mult2) %>%
+#       dplyr::select(-nodeID, -GOI, -Module_color)
+# 
+#     colnames(ann_mult)[1] <- c("Gene name")
+# 
+#     if (nrow(filtered_edges_mult()) > 0) {
+# 
+#       ann_mult[[1]] <- paste0('<a href="https://plantgenie.org/gene?id=', ann_mult[[1]], '" target="_blank">', ann_mult[[1]], '</a>')
+#     }
+#     head(ann_mult)
+#     return(ann_mult)
+# 
+#   })
+# 
+#   # Render Node Table with selectable rows
+#   observeEvent(input$submit_table_multiple, {
+#     output$node_table_multiple <- DT::renderDT({
+#       req(filtered_nodes_ann_mult())
+#       print("Rendering table with filtered nodes")# Ensure data is available
+#       DT::datatable(
+#         filtered_nodes_ann_mult(),
+#         options = list(
+#           pageLength = 10,  # Show 10 rows per page by default
+#           lengthMenu = list(c(10, 15, 20, -1), c('10', '15', '20', 'All')),  # Options to show 10, 15, 20 or all rows
+#           #order = list(list(1, 'desc')),  # Order by the first column initially
+#           searching = TRUE,  # Enable search box
+#           ordering = TRUE,  # Enable column ordering
+#           dom = 'lfrtip',  # Show length menu, filtering input, and pagination controls
+#           columnDefs = list(list(targets = ncol(filtered_nodes_ann_mult()) - 1, orderable = FALSE)),  # Disable ordering on the checkbox column
+#           language = list(emptyTable = "Your genes of interest are below the chosen network threshold")  # Custom error message
+#         ),
+#         escape = FALSE,
+#         selection = 'multiple',
+#         rownames = FALSE
+#       )
+#     })
+#   })
+# 
+#   #Create nodes without links
+#   filtered_nodes_mult_download <- eventReactive(input$submit_table_multiple, {
+#     req(filtered_nodes_ann_mult())
+# 
+#     `Gene name` <- gsub('.*>(.*)<.*', '\\1', filtered_nodes_ann_mult()$`Gene name`)
+#     cbind(`Gene name`,
+#           filtered_nodes_ann_mult() %>%
+#             select(!`Gene name`))
+#   })
+# 
+#   filtered_edges_mult_download <- eventReactive(input$submit_table_multiple, {
+#     req(filtered_nodes_ann_mult())
+# 
+#     ann_gene_names_mult <- gsub('.*>(.*)<.*', '\\1', filtered_nodes_ann_mult()$`Gene name`)
+#     edges %>%
+#       filter(fromNode %in% ann_gene_names_mult & toNode %in% ann_gene_names_mult)
+#   })
+# 
+#   # Add download handler for node table
+#   output$download_table_multiple <- downloadHandler(
+#     filename = function() {
+#       paste(Sys.Date(), "_node_table_multiple_genes","_thr", values$thr_mult, ".txt", sep = "")
+#     },
+#     content = function(file) {
+#       write.table(filtered_nodes_mult_download(), file, sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE)
+#     })
+# 
+#   # Add download for edges
+#   output$download_edges_multiple <- downloadHandler(
+#     filename = function() {
+#       paste(Sys.Date(), "_edges_table_multiple_genes", "_thr", values$thr_mult, ".txt", sep = "")
+#     },
+#     content = function(file) {
+#       write.table(filtered_edges_mult_download(), file, sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE)
+#     })
+# 
+# # Update selected genes when plot button is clicked
+#   observeEvent(input$plot_button_multiple, {
+#     req(input$submit_table_multiple, values$thr_mult, input$List_gen)
+# 
+#     selected_rows <- input$node_table_multiple_rows_selected #???
+#     if (!is.null(selected_rows)) {
+#       # Extract the gene names and apply gsub to each element individually
+#       gene_names <- filtered_nodes_ann_mult()[selected_rows, "Gene name"]
+# 
+#       # Use sapply to apply gsub to each gene name in the vector
+#       values$selected_genes_mult <- sapply(gene_names, function(x) gsub('.*>(.*)<.*', '\\1', x))
+#     } else {
+#       values$selected_genes_mult <- NULL
+#     }
+#     print(paste("Selected genes: ", paste(values$selected_genes_mult, collapse = ", ")))
+#   })
+# 
+#   # Create a reactive expression to hold the network data
+#   network_data_mult <- reactiveVal(NULL)
+# 
+#   # Observe button click to update network data
+#     observeEvent(input$plot_button_multiple, {
+#     # Ensure that inputs are available and valid
+#     req(values$selected_genes_mult, input$plot_button_multiple, input$List_gen)
+# 
+#     filtered_edges_data <- filtered_edges_mult()
+# 
+#     selected_genes <- values$selected_genes_mult
+#     # print(selected_genes)
+#     # selected_genes <-c("Potra2n8c17315", "Potra2n10c20839")
+# 
+#     if (length(selected_genes) == 0) {
+#       filtered_edges_network <- filtered_edges_data
+#     } else {
+#       filtered_edges_network <- edges %>%
+#         filter(fromNode %in% selected_genes & toNode %in% selected_genes)
+#     }
+# 
+#     if (nrow(filtered_edges_network) == 0) {
+#       network_data_mult(NULL)  # Set to NULL if no data
+#       return(NULL)
+#     }
+# 
+# 
+#     filtered_nodes <- data.frame(id = unique(c(filtered_edges_data$fromNode, filtered_edges_data$toNode)))
+#     filtered_nodes$nodeID <- match(filtered_nodes$id, unique(filtered_nodes$id)) - 1
+# 
+#     filtered_nodes_network <- nodes %>%
+#       dplyr::select(-c(Degree, Module)) %>%
+#       filter(nodeName %in% unique(c(filtered_edges_network$fromNode, filtered_edges_network$toNode))) %>%
+#       left_join(filtered_nodes, by = c("nodeName" = "id")) %>%
+#       left_join(subannot %>% select(`Gene name`, Centrality, Module), by = c("nodeName" = "Gene name")) %>%
+#       separate(Module, c('Module_color', 'Module'), sep = "/")
+# 
+#     filtered_edges_network$fromNodeID <- match(filtered_edges_network$fromNode, filtered_nodes_network$nodeName) - 1
+#     filtered_edges_network$toNodeID <- match(filtered_edges_network$toNode, filtered_nodes_network$nodeName) - 1
+# 
+#     network_data_mult(list(edges = filtered_edges_network, nodes = filtered_nodes_network))
+#   })
+# 
+#   # Render network plot based on the reactive network_data
+#   output$network_plot_multiple <- renderForceNetwork({
+#     network_info <- network_data_mult()
+#     req(network_info)  # Ensure network data is available
+# 
+#     network_plot <- forceNetwork(
+#       Links = network_info$edges,
+#       Nodes = network_info$nodes,
+#       Source = "fromNodeID",
+#       Target = "toNodeID",
+#       NodeID = "nodeName",
+#       Group = "Module",
+#       opacity = 0.8,
+#       zoom = TRUE,
+#       linkColour = "grey",
+#       linkWidth = 2,
+#       fontSize = 20,
+#       linkDistance = 400,
+#       colourScale = networkD3::JS('d3.scaleOrdinal().domain(["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46"]).range(["#40E0D0", "#0000FF", "#A52A2A", "#FFFF00", "#00FF00", "#FF0000", "#000000", "#FFC0CB", "#FF00FF", "#A020F0", "#ADFF2F", "#D2B48C", "#FA8072", "#00FFFF", "#191970", "#E0FFFF", "#999999", "#90EE90", "#FFFFE0", "#4169E1", "#8B0000", "#006400", "#00CED1", "#A9A9A9", "#FFA500", "#FF8C00", "#EEE9E9", "#87CEEB", "#8B4513", "#AFEEEE", "#4682B4", "#EE82EE", "#556B2F", "#8B008B", "#CD6839", "#9ACD32", "#6CA6CD", "#FFBBFF", "#8B2500", "#8968CD", "#CAE1FF", "#E0FFFF", "#FFFFF0", "#FFFAF0", "#EE7600", "#8B2323"])'),
+#       Nodesize = "Centrality",
+#       legend = FALSE
+#     )
+#     network_plot <- htmlwidgets::onRender(
+#       network_plot,
+#       '
+#   function(el, x) {
+#     d3.selectAll(".node circle")
+#       .style("stroke", "grey")
+#       .style("stroke-width", "2px")
+# 
+#     d3.selectAll(".node text")
+#       .style("fill", "#B3BAB9");
+#   }
+#   '
+#     )
+# 
+#     network_plot
+#   })
+# 
+#   # Render legend plot
+#   output$network_legend_multiple <- renderPlot({
+#     req(values$selected_genes_mult, input$plot_button_multiple)
+#     suppressWarnings({
+#     grid.newpage()
+#     grid.roundrect(
+#       x = 0.6, y = 0.5,
+#       width = unit(6, "cm"), height = unit(14.5, "cm"),  # Adjust width and height of the legend background
+#       r = unit(0.5, "cm"),  # Set the corner radius, tweak as needed
+#       gp = gpar(fill = "#C1D6E0", col = NA)  # Fill color for the legend background
+#     )
+#     pushViewport(viewport(x = 0.6, y = 0.5, just = "center"))  # Move the legend to the right
+#     grid.draw(legend)
+#     })
+#   })
  }  
 
 
