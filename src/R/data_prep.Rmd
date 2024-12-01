@@ -24,8 +24,12 @@ load(paste0(path, "RData/data_1_3_2_year_around_v2_app.RData"))
 load("/Users/laia0002/Library/CloudStorage/OneDrive-Sverigeslantbruksuniversitet/Dokument/Sweden/UPSC/PhD/data/Transcriptomic_analysis_Torgeir/AspenCoExpression_Laura/Transcriptional_roadmap/RData/data_1_3_2_year_around_v2_app.RData")
 
  cat("Genes x Samples: ", paste0(dim(data), collapse = " x "))
-load(paste0(path, "expression_data/genetable_1_3_2_year_around_v2.RData"))
-subannot <- readRDS("/Users/laia0002/Library/CloudStorage/OneDrive-Sverigeslantbruksuniversitet/Dokument/Sweden/UPSC/PhD/data/Transcriptomic_analysis_Torgeir/AspenCoExpression_Laura/POPUL_R_filtered/RData/subannot.rds")
+# load(paste0(path, "expression_data/genetable_1_3_2_year_around_v2.RData"))
+# subannot <- readRDS("/Users/laia0002/Library/CloudStorage/OneDrive-Sverigeslantbruksuniversitet/Dokument/Sweden/UPSC/PhD/data/Transcriptomic_analysis_Torgeir/AspenCoExpression_Laura/POPUL_R_filtered/RData/subannot.rds")
+load("/Users/laia0002/aspen-FT-compendium/RData/genetable_1_3_2_year_around.RData")
+
+subannot <- subannot %>% 
+  separate(Module, c('Module_color', 'Module'), sep = "/")
 
 subannot[subannot==""]<-NA
 
@@ -71,7 +75,7 @@ expression_data_subannot <- expression_data %>%
 
 
 expression_data_subannot <- expression_data_subannot %>% 
-  group_by(Gene, `Month/Treatment`, Location, Treatment2) %>%
+  group_by(Gene, `Month/Treatment`, Location, Tissue, Treatment2) %>%
       summarize(mean = mean(Expression),
                 se = std.error(Expression)) %>%
       arrange(Treatment2)
@@ -92,12 +96,39 @@ expression_data_subannot$`Month/Treatment` <- factor(expression_data_subannot$`M
                                                               "LD1","LD2","LD3", "LD4",
                                                               "SD1","SD2","SD3","SD10"))
 
-expression_data_subannot <- readRDS("/Users/laia0002/Library/CloudStorage/OneDrive-Sverigeslantbruksuniversitet/POPUL_R2/expression_data_app.rds")
+#=====For mini version====#
+
+GOIs_paper <- read_delim("/Users/laia0002/POPUL_R_mini/GOI_mini_app.txt", col_names = FALSE) %>%
+  dplyr:::select(X2)
+
+colnames(GOIs_paper) <- "Gene name"
+
+# TFs <- subannot %>% 
+#   filter(`Gene name` %in% GOIs_paper$`Gene name`) %>% 
+#   select(Family) %>% 
+#   unique() %>% 
+#   drop_na()
+
+expression_data_subannot_mini <- GOIs_paper %>%
+  left_join(expression_data_subannot, by = c("Gene name" = "Gene"))
+
+# expression_data_subannot_mini <- expression_data_subannot %>% 
+#   filter(Gene %in% nodes_mini$`Gene name`)
+  # nodes_mini$`Gene name` %>%
+  # left_join(expression_data_subannot, by = c("Gene name" = "Gene"))
+
+colnames(expression_data_subannot_mini)[1] <- "Gene"
+
+saveRDS(expression_data_subannot_mini, "/Users/laia0002/POPUL_R_mini/expression_data/expression_data_mini.rds")
+
+#==========#
+
+# expression_data_subannot <- readRDS("/Users/laia0002/Library/CloudStorage/OneDrive-Sverigeslantbruksuniversitet/POPUL_R2/expression_data_app.rds")
 # 
 # expression_data_subannot <- expression_data_app
-gene_names <- expression_data_subannot$Gene
+# gene_names <- expression_data_subannot$Gene
 
-saveRDS(gene_names, "expression_data/gene_names.rds")
+# saveRDS(gene_names, "expression_data/gene_names.rds")
 
 
 # # Create folders and save .rds files 
@@ -151,12 +182,62 @@ lapply(names(gene_list), function(gene) {
 # saveRDS(samples.sep, "RData/samples.sep.rds")
 # saveRDS(subannot %>% 
 #           filter(`Gene name` == "Potra2n8c17315"), "RData/subannot.rds")
+
+
 ```
 
 ```{r load network}
 #Load thresholded network
-nodes <- data.frame(read_delim(paste0("nodes-all_1_3_2_year_around_v2_0.1.txt.gz")))
-edges <- data.frame(read_delim(paste0("edges-all_1_3_2_year_around_v2_0.1.txt.gz")))
+nodes <- data.frame(read_delim(paste0("/Users/laia0002/POPUL_R_extrafiles/nodes-all_1_3_2_year_around_v2_0.1.txt.gz")))
+edges <- data.frame(read_delim(paste0("/Users/laia0002/POPUL_R_extrafiles/edges-all_1_3_2_year_around_v2_0.1.txt.gz")))
+
+#=====For mini version=====#
+
+# nodes_subannot <- readRDS("/Users/laia0002/POPUL_R/nodes_subannot.rds")
+
+nodes_subannot <- nodes %>% 
+  select(nodeName) %>% 
+  left_join(subannot, by = c("nodeName" = "Gene name")) %>% 
+  select(!c(GOI, Module_color)) %>% 
+  rename(c(`Gene name` = nodeName, `GO term`= GO))
+
+# nodes_mini <- GOIs_paper %>%
+#    left_join(nodes_subannot)
+
+first_neigh_mini <- edges %>%
+  dplyr::select(fromNode, toNode, weight) %>%
+  filter(fromNode %in% GOIs_paper$`Gene name` | toNode %in% GOIs_paper$`Gene name`) %>%
+  filter(weight >= 0.3)
+
+nodes_mini <- nodes_subannot %>%
+  filter(`Gene name` %in% unique(c(first_neigh_mini$fromNode, first_neigh_mini$toNode)))
+
+
+
+# first_neigh_nodes_mini <- unique(c(first_neigh_mini$fromNode, first_neigh_mini$toNode))
+
+#  a <- unique(c(first_neigh_mini$fromNode, first_neigh_mini$toNode))
+#  b <- unique(nodes_mini$`Gene name`)
+# c <- setdiff(nodes_mini$`Gene name`, GOIs_paper$`Gene name`)
+#
+# first_neigh_edges_mini <- edges %>%
+#   dplyr::select(fromNode, toNode, weight) %>%
+#   filter(fromNode %in% c & toNode %in% c) %>%
+#   filter(weight >= 0.3)
+#
+# first_neigh_all_mini <- rbind(first_neigh_mini, first_neigh_edges_mini)
+
+edges_mini <- edges %>%
+  dplyr::select(fromNode, toNode, weight) %>%
+  filter(fromNode %in% nodes_mini$`Gene name` & toNode %in% nodes_mini$`Gene name`) %>%
+  filter(weight >= 0.3)
+nodes_mini <- nodes_mini %>% 
+  select(!`GO term`)
+
+# write.csv(first_neigh_edges_mini, gzfile("/Users/laia0002/POPUL_R_mini/network/edges_mini.csv.gz"), row.names = FALSE)
+saveRDS(nodes_mini, gzfile("/Users/laia0002/POPUL_R_mini/network/nodes_mini.rds"))
+saveRDS(edges_mini, gzfile("/Users/laia0002/POPUL_R_mini/network/edges_mini.rds"))
+#==========================#
 
 edges <- edges %>%  
   select(fromNode, toNode, weight)
@@ -402,6 +483,108 @@ filtered_edges_neigh <- edges_sorted_from %>%
 # 
 # lapply(unique_genes, edges_first_neighbors, edges = edges)
 
+
+
+
+
+```
+
+```{r modules}
+#=== For mini version===#
+
+load("/Users/laia0002/aspen-FT-compendium/RData/GO_modules_1_3_2_year_around.RData")
+
+module_color <- setNames(unique(subannot$Module), unique(subannot$Module_color))
+names(GO_modules) <- module_color[names(GO_modules)]
+
+#Remove module trash grey and brown4/46, 46 has no GO terms
+
+GO_modules <- GO_modules[c(2:45, 47)]
+sort(names(GO_modules))
+
+GO_modules_df <- do.call(rbind, lapply(names(GO_modules), function(name) {
+      cbind(Module = name, GO_modules[[name]])
+    })) 
+
+# get_module <- function (number) {
+#  GO_modules[[number]]
+# }
+
+
+# saveRDS(GO_modules_df, "/Users/laia0002/POPUL_R/GO_modules.rds")
+
+# GO_modules <- readRDS("/Users/laia0002/GO_modules.rds")
+
+#Only save necessary modules in mini
+# modules_mini <- filter(subannot, `Gene name` %in% GOIs_paper$`Gene name`) %>% 
+#   select(Module) %>% 
+#   unique()
+nodes_mini <- readRDS("/Users/laia0002/POPUL_R_mini/network/nodes_mini.rds")
+modules_mini <- filter(subannot, `Gene name` %in% nodes_mini$`Gene name`) %>% 
+  select(Module) %>% 
+  unique()
+
+GO_modules_mini <- filter(GO_modules_df, Module %in% modules_mini$Module)
+
+#Replace GO terms for GO IDs
+
+# Step 1: Split concatenated GO terms in `nodes_mini` into separate rows
+nodes_expanded <- nodes_mini %>%
+  separate_rows(`GO term`, sep = ";\\s*")  # Split by "; " or ";" with spaces
+
+# Step 2: Join with `GO_modules_df` to map GO terms to GO IDs
+nodes_with_ids <- nodes_expanded %>%
+  left_join(GO_modules_df %>% select(`GO term`, `GO id`), by = "GO term") %>% 
+  # filter(!is.na(`GO id`)) %>% 
+  unique() 
+
+# Step 3: Re-concatenate GO IDs by grouping back to original rows
+nodes_reformatted <- nodes_with_ids %>%
+    group_by(`Gene name`, Description, ATG, `ATG symbol`, `ATG full name`, Family, Centrality, Module) %>% 
+    summarise (`GO id` = paste(`GO id`, collapse = "; "),
+               `GO term` = paste(`GO term`, collapse = "; "))
+
+nodes_reformatted$`GO id` <- ifelse(nodes_reformatted$`GO id` == "NA", NA, nodes_reformatted$`GO id`)
+
+saveRDS(nodes_reformatted, "/Users/laia0002/POPUL_R_mini/network/nodes_mini.rds")
+
+GO_modules_mini$`P-value` <- as.numeric(GO_modules_mini$`P-value`)
+saveRDS(GO_modules_mini, "/Users/laia0002/POPUL_R_mini/GO_modules_mini.rds")
+#Need to regenerate heatmaps of module eigengenes
+
+#Rename heatmaps
+
+
+# List of heatmap files
+heatmap_files <- list.files(heatmaps_dir, pattern = "heatmap_module_.*\\.pdf$", full.names = TRUE)
+
+for (file in heatmap_files) {
+  # Extract the filename without the path
+  
+  # file <- "/Users/laia0002/heatmaps/heatmap_module_yellow.pdf" 
+  file_name <- basename(file)
+  
+  # Extract the color name between "_" and ".pdf"
+  color_name <- sub("heatmap_module_(.*)\\.pdf", "\\1", file_name)
+  
+  # Look up the number corresponding to the color name in the index
+  if (color_name %in% names(index)) {
+    color_number <- index[color_name]
+    
+    # Replace the color name with the number in the filename
+    new_name <- sub(color_name, color_number, file_name)
+    
+    # Generate full path for the new file name
+    new_file <- file.path(heatmaps_dir, new_name)
+    
+    # Rename the file
+    file.rename(file, new_file)
+    
+    cat("Renamed:", file_name, "to", new_name, "\n")
+  } else {
+    cat("No matching color found for:", file_name, "\n")
+  }
+}
 
 
 

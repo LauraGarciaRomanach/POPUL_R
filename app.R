@@ -853,9 +853,9 @@ ui <- fluidPage(
   # })
 
   # Display error message if any
-  output$error_message <- renderText({
-    values$error_message
-  })
+  # output$error_message <- renderText({
+  #   values$error_message
+  # })
 
   # observeEvent(input$submit_table, {
   #   values$thr <- input$weight_thr
