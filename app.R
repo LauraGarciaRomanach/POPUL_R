@@ -416,11 +416,11 @@ ui <- fluidPage(
                      # htmlOutput("plot_footnote"),
                      div(style = "margin-bottom: 40px;"), 
                      htmlOutput("plot_footnote"),
-                     div(style = "display: flex; justify-content: flex-start; margin-top: 20px"))
+                     div(style = "display: flex; justify-content: flex-start; margin-top: 20px"),
                          # downloadButton("download_plot_png", "Expression profile.png", class = "btn-info", style = "width: 200px; margin-right: 10px; padding: 5px 10px;"),
                          # downloadButton("download_heatmap_svg", "Expression profile.svg", class = "btn-info", style = "width: 200px; margin-right: 10px; padding: 5px 10px;"), 
                          # downloadButton("download_heatmap_pdf", "Expression profile.pdf", class = "btn-info", style = "width: 200px; margin-right: 10px; padding: 5px 10px; "),
-                         # downloadButton("download_data_heatmap", "Expression data.txt", class = "btn-info", style = "width: 200px; padding: 5px 10px;")))
+                         downloadButton("download_data_heatmap", "Expression data.txt", class = "btn-info", style = "width: 200px; padding: 5px 10px;"))
                  )
                ),
                column(
@@ -930,8 +930,6 @@ server <- function(input, output, session) {
       write.table(expression_data_plot(), file, sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE)
     })
   
-  
-  
   # Reactive expression to generate the heatmap
   heatmap_data <- eventReactive(input$show_heatmap, {
     # if (!is.null(values$error_message_multiple2)) {
@@ -1123,15 +1121,15 @@ server <- function(input, output, session) {
   #   }
   # )
   # 
-  # output$download_data_heatmap <- downloadHandler(
-  #   filename = function() {
-  #     paste(Sys.Date(), "_heatmap_expression_data.txt", sep = "")
-  #   },
-  #   content = function(file) {
-  #     # write.csv(heatmap_data(), file)
-  #     write.table(heatmap_data(), file, sep = "\t", row.names = TRUE, col.names = TRUE, quote = FALSE)
-  #   })
-  #
+  output$download_data_heatmap <- downloadHandler(
+    filename = function() {
+      paste(Sys.Date(), "_heatmap_expression_data.txt", sep = "")
+    },
+    content = function(file) {
+      # write.csv(heatmap_data(), file)
+      write.table(heatmap_data(), file, sep = "\t", row.names = TRUE, col.names = TRUE, quote = FALSE)
+    })
+
   observeEvent(input$show_heatmap, {
 
     withProgress(message = 'Generating heatmap...', value = 0, {
@@ -1282,7 +1280,8 @@ server <- function(input, output, session) {
   
   subnetwork <- eventReactive(input$submit_table, {
     df <- edges %>%
-      filter((fromNode %in% filtered_nodes_ann()$`Gene name` & toNode %in% filtered_nodes_ann()$`Gene name`)) 
+      filter((fromNode %in% filtered_nodes_ann()$`Gene name` & toNode %in% filtered_nodes_ann()$`Gene name`)) %>% 
+      filter(weight >= values$thr)
     print("subnetwork created")
     return(df)
   })
