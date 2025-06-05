@@ -13,20 +13,15 @@ library(dplyr)
 library(tidyverse)
 library(data.table)
 library(plotrix)
-
-path = "~/Library/CloudStorage/OneDrive-Sverigeslantbruksuniversitet/Dokument/Sweden/UPSC/PhD/data/Transcriptomic_analysis_Torgeir/AspenCoExpression_Laura/POPUL_R_filtered/"
 ```
 
 ```{r load expression data}
-#Load filtered data used in the manuscript
-load(paste0(path, "RData/data_1_3_2_year_around_v2_app.RData"))
-
-load("/Users/laia0002/Library/CloudStorage/OneDrive-Sverigeslantbruksuniversitet/Dokument/Sweden/UPSC/PhD/data/Transcriptomic_analysis_Torgeir/AspenCoExpression_Laura/Transcriptional_roadmap/RData/data_1_3_2_year_around_v2_app.RData")
-
- cat("Genes x Samples: ", paste0(dim(data), collapse = " x "))
-# load(paste0(path, "expression_data/genetable_1_3_2_year_around_v2.RData"))
-# subannot <- readRDS("/Users/laia0002/Library/CloudStorage/OneDrive-Sverigeslantbruksuniversitet/Dokument/Sweden/UPSC/PhD/data/Transcriptomic_analysis_Torgeir/AspenCoExpression_Laura/POPUL_R_filtered/RData/subannot.rds")
+load("/Users/laia0002/aspen-FT-compendium/data/gene-counts-and-VSTexpression.RData")
 load("/Users/laia0002/aspen-FT-compendium/RData/genetable_1_3_2_year_around.RData")
+data <- data[rowSums(data) > 0, ]
+
+cat("Genes x Samples: ", paste0(dim(data), collapse = " x "))
+cat("Genes x Samples: ", paste0(dim(data), collapse = " x "))
 
 subannot <- subannot %>% 
   separate(Module, c('Module_color', 'Module'), sep = "/")
@@ -79,10 +74,11 @@ expression_data_subannot <- expression_data %>%
 
 
 expression_data_subannot <- expression_data_subannot %>% 
-  group_by(Gene, `Month/Treatment`, Location, Tissue, Treatment2) %>%
+  group_by(Gene, `Month/Treatment`, Location, Tissue, Treatment2, Family) %>%
       summarize(mean = mean(Expression),
                 se = std.error(Expression)) %>%
-      arrange(Treatment2)
+      arrange(Treatment2) %>% 
+  as.data.table()
 
 expression_data_subannot$`Month/Treatment` <- factor(expression_data_subannot$`Month/Treatment`, levels = c(
                                                               "SEP",
@@ -100,33 +96,35 @@ expression_data_subannot$`Month/Treatment` <- factor(expression_data_subannot$`M
                                                               "BB1","BB2","BB3", "LD",
                                                               "SD1","SD2","SD3","SD10"))
 
-#=====For mini version====#
 
-GOIs_paper <- read_delim("/Users/laia0002/POPUL_R_mini/GOI_mini_app.txt", col_names = FALSE) %>%
-  dplyr:::select(X2)
 
-colnames(GOIs_paper) <- "Gene name"
-
-# TFs <- subannot %>% 
-#   filter(`Gene name` %in% GOIs_paper$`Gene name`) %>% 
-#   select(Family) %>% 
-#   unique() %>% 
+# #=====For mini version====#
+# 
+# GOIs_paper <- read_delim("/Users/laia0002/POPUL_R_mini/GOI_mini_app.txt", col_names = FALSE) %>%
+#   dplyr:::select(X2)
+# 
+# colnames(GOIs_paper) <- "Gene name"
+# 
+# TFs <- subannot %>%
+#   filter(`Gene name` %in% GOIs_paper$`Gene name`) %>%
+#   select(Family) %>%
+#   unique() %>%
 #   drop_na()
-
-expression_data_subannot_mini <- GOIs_paper %>%
-  left_join(expression_data_subannot, by = c("Gene name" = "Gene"))
-
-# expression_data_subannot_mini <- expression_data_subannot %>% 
+# 
+# expression_data_subannot_mini <- GOIs_paper %>%
+#   left_join(expression_data_subannot, by = c("Gene name" = "Gene"))
+# 
+# expression_data_subannot_mini <- expression_data_subannot %>%
 #   filter(Gene %in% nodes_mini$`Gene name`)
-  # nodes_mini$`Gene name` %>%
-  # left_join(expression_data_subannot, by = c("Gene name" = "Gene"))
-
-colnames(expression_data_subannot_mini)[1] <- "Gene"
-
+# nodes_mini$`Gene name` %>%
+# left_join(expression_data_subannot, by = c("Gene name" = "Gene"))
+# 
+# colnames(expression_data_subannot_mini)[1] <- "Gene"
+# 
 # saveRDS(expression_data_subannot_mini, "/Users/laia0002/POPUL_R_mini/expression_data/expression_data_mini.rds")
-
-annot_col <- readRDS("/Users/laia0002/POPUL_R_mini/annot_col.rds")
-
+# 
+# annot_col <- readRDS("/Users/laia0002/POPUL_R_mini/annot_col.rds")
+# 
 # annot_col$`Month/Treatment` <- if_else(annot_col$`Month/Treatment` == "LD1" , "BB1",
 #                                          if_else(annot_col$`Month/Treatment` == "LD2" , "BB2",
 #                                                  if_else(annot_col$`Month/Treatment` == "LD3" , "BB3",
@@ -143,444 +141,132 @@ saveRDS(expression_data_subannot,
 annot_col <- readRDS("/Users/laia0002/POPUL_R_mini/annot_col.rds")
 
  annot_col$`Month/Treatment` <- factor(annot_col$`Month/Treatment`, 
-+                                             levels = c("SEP", "OCT", "DEC", "JAN", "FEB", "MAR", 
-+                                                        "APR", "MAY", "JUN", "JUL", "AUG", 
-+                                                        "SD15", "CT2", "CT8", "CT10", "BB1", 
-+                                                        "BB2", "BB3", "LD", "SD1", "SD2", 
-+                                                        "SD3", "SD10"))
+                                             levels = c("SEP", "OCT", "DEC", "JAN", "FEB", "MAR", 
+                                                        "APR", "MAY", "JUN", "JUL", "AUG", 
+                                                        "SD15", "CT2", "CT8", "CT10", "BB1", 
+                                                        "BB2", "BB3", "LD", "SD1", "SD2", 
+                                                        "SD3", "SD10"))
 saveRDS(annot_col, "/Users/laia0002/POPUL_R/annot_col.rds")
 
 #============#
-
-# expression_data_subannot <- readRDS("/Users/laia0002/Library/CloudStorage/OneDrive-Sverigeslantbruksuniversitet/POPUL_R2/expression_data_app.rds")
-# 
-# expression_data_subannot <- expression_data_app
-# gene_names <- expression_data_subannot$Gene
-
-# saveRDS(gene_names, "expression_data/gene_names.rds")
-
-
-# # Create folders and save .rds files 
-# lapply(gene_names, function(gene) {
-#   
-#   gene_folder <- file.path("Rdata", gene)
-#   
-#   # if (!dir.exists(gene_folder)) {
-#   dir.create(gene_folder, showWarnings = FALSE) 
-#   # }
-#   
-#   #Create one file per gene
-#   gene_data <-expression_data_subannot[expression_data_subannot$Gene == gene,]
-#   
-#   saveRDS(gene_data, file = file.path(gene_folder, paste0(gene, ".rds")))
-#  
-# })
-
-# gene_list <- split(expression_data_subannot, expression_data_subannot$Gene)
-# 
-# # # Define the output directory
-# # output_dir <- "path/to/output/directory"
-# gene_folder <- file.path("expression_data")
-# 
-# # Save each list element as a separate .rds file
-# lapply(names(gene_list), function(gene) {
-#   
-#   message(paste("Processing gene:", gene))
-#   
-#   # gene_folder <- file.path("Rdata", gene)
-#   
-#   #  if (!dir.exists(gene_folder)) {
-#   # dir.create(gene_folder, showWarnings = FALSE)
-#   #  }
-#   # Define the file path for each gene
-#   file_name <- file.path(gene_folder, paste0(gene, ".rds"))
-#   
-#   # Save each gene's data as an .rds file
-#   saveRDS(gene_list[[gene]], file = file_name)
-# })
-   
-
-
-# saveRDS(expression_data_subannot, file = "~/Library/CloudStorage/OneDrive-Sverigeslantbruksuniversitet/Dokument/Sweden/UPSC/PhD/data/Transcriptomic_analysis_Torgeir/AspenCoExpression_Laura/POPUL_R/RData/expression_data_app.rds")
-# 
-# saveRDS(expression_data_subannot, file = "~/Library/CloudStorage/OneDrive-Sverigeslantbruksuniversitet/Dokument/Sweden/UPSC/PhD/data/Transcriptomic_analysis_Torgeir/AspenCoExpression_Laura/Transcriptional_roadmap/RData/expression_data_subannot_app.rds")
-
-# saveRDS(subannot, file = "~/Library/CloudStorage/OneDrive-Sverigeslantbruksuniversitet/Dokument/Sweden/UPSC/PhD/data/Transcriptomic_analysis_Torgeir/AspenCoExpression_Laura/POPUL_R_filtered/RData/subannot.rds")
-
-# saveRDS(subset(data, rownames(data) %in% "Potra2n8c17315"), "RData/data.rds")
-# saveRDS(samples.sep, "RData/samples.sep.rds")
-# saveRDS(subannot %>% 
-#           filter(`Gene name` == "Potra2n8c17315"), "RData/subannot.rds")
-
-
 ```
 
 ```{r load network}
-#Load thresholded network
-nodes <- data.frame(read_delim(paste0("/Users/laia0002/POPUL_R_extrafiles/nodes-all_1_3_2_year_around_v2_0.1.txt.gz")))
-edges <- data.frame(read_delim(paste0("/Users/laia0002/POPUL_R_extrafiles/edges-all_1_3_2_year_around_v2_0.1.txt.gz")))
+# #Load thresholded network
+# nodes <- data.frame(read_delim(paste0("/Users/laia0002/POPUL_R_extrafiles/nodes-all_1_3_2_year_around_v2_0.1.txt.gz")))
+# edges <- data.frame(read_delim(paste0("/Users/laia0002/POPUL_R_extrafiles/edges-all_1_3_2_year_around_v2_0.1.txt.gz")))
 
 #=====For mini version=====#
 
-# nodes_subannot <- readRDS("/Users/laia0002/POPUL_R/nodes_subannot.rds")
-
-nodes_subannot <- nodes %>% 
-  select(nodeName) %>% 
-  left_join(subannot, by = c("nodeName" = "Gene name")) %>% 
-  select(!c(GOI, Module_color)) %>% 
-  rename(c(`Gene name` = nodeName, `GO term`= GO))
-
-# nodes_mini <- GOIs_paper %>%
-#    left_join(nodes_subannot)
-
-# first_neigh_mini <- edges %>%
-#   dplyr::select(fromNode, toNode, weight) %>%
-#   filter(fromNode %in% GOIs_paper$`Gene name` | toNode %in% GOIs_paper$`Gene name`) %>%
-#   filter(weight >= 0.3)
+# # nodes_subannot <- readRDS("/Users/laia0002/POPUL_R/nodes_subannot.rds")
 # 
-# nodes_mini <- nodes_subannot %>%
-#   filter(`Gene name` %in% unique(c(first_neigh_mini$fromNode, first_neigh_mini$toNode)))
-
-
-
-# first_neigh_nodes_mini <- unique(c(first_neigh_mini$fromNode, first_neigh_mini$toNode))
-
-#  a <- unique(c(first_neigh_mini$fromNode, first_neigh_mini$toNode))
-#  b <- unique(nodes_mini$`Gene name`)
-# c <- setdiff(nodes_mini$`Gene name`, GOIs_paper$`Gene name`)
-#
-# first_neigh_edges_mini <- edges %>%
-#   dplyr::select(fromNode, toNode, weight) %>%
-#   filter(fromNode %in% c & toNode %in% c) %>%
-#   filter(weight >= 0.3)
-#
-# first_neigh_all_mini <- rbind(first_neigh_mini, first_neigh_edges_mini)
-
-# edges_mini <- edges %>%
-#   dplyr::select(fromNode, toNode, weight) %>%
-#   filter(fromNode %in% nodes_mini$`Gene name` & toNode %in% nodes_mini$`Gene name`) %>%
-#   filter(weight >= 0.3)
-# nodes_mini <- nodes_mini %>% 
-#   select(!`GO term`)
-
-# write.csv(first_neigh_edges_mini, gzfile("/Users/laia0002/POPUL_R_mini/network/edges_mini.csv.gz"), row.names = FALSE)
-# saveRDS(nodes_mini, gzfile("/Users/laia0002/POPUL_R_mini/network/nodes_mini.rds"))
-saveRDS(edges_mini, gzfile("/Users/laia0002/POPUL_R_mini/network/edges_mini.rds"))
+# nodes_subannot <- nodes %>% 
+#   select(nodeName) %>% 
+#   left_join(subannot, by = c("nodeName" = "Gene name")) %>% 
+#   select(!c(GOI, Module_color)) %>% 
+#   rename(c(`Gene name` = nodeName, `GO term`= GO))
+# 
+# # nodes_mini <- GOIs_paper %>%
+# #    left_join(nodes_subannot)
+# 
+# # first_neigh_mini <- edges %>%
+# #   dplyr::select(fromNode, toNode, weight) %>%
+# #   filter(fromNode %in% GOIs_paper$`Gene name` | toNode %in% GOIs_paper$`Gene name`) %>%
+# #   filter(weight >= 0.3)
+# # 
+# # nodes_mini <- nodes_subannot %>%
+# #   filter(`Gene name` %in% unique(c(first_neigh_mini$fromNode, first_neigh_mini$toNode)))
+# 
+# 
+# 
+# # first_neigh_nodes_mini <- unique(c(first_neigh_mini$fromNode, first_neigh_mini$toNode))
+# 
+# #
+# # first_neigh_edges_mini <- edges %>%
+# #   dplyr::select(fromNode, toNode, weight) %>%
+# #   filter(fromNode %in% c & toNode %in% c) %>%
+# #   filter(weight >= 0.3)
+# #
+# # first_neigh_all_mini <- rbind(first_neigh_mini, first_neigh_edges_mini)
+# 
+# # edges_mini <- edges %>%
+# #   dplyr::select(fromNode, toNode, weight) %>%
+# #   filter(fromNode %in% nodes_mini$`Gene name` & toNode %in% nodes_mini$`Gene name`) %>%
+# #   filter(weight >= 0.3)
+# # nodes_mini <- nodes_mini %>% 
+# #   select(!`GO term`)
+# 
+# # write.csv(first_neigh_edges_mini, gzfile("/Users/laia0002/POPUL_R_mini/network/edges_mini.csv.gz"), row.names = FALSE)
+# # saveRDS(nodes_mini, gzfile("/Users/laia0002/POPUL_R_mini/network/nodes_mini.rds"))
+# saveRDS(edges_mini, gzfile("/Users/laia0002/POPUL_R_mini/network/edges_mini.rds"))
 #==========================#
-
-# edges <- edges %>%  
-#   select(fromNode, toNode, weight)
-# 
-# edges_sorted_from <- edges %>% 
-#   sort_by(edges$fromNode)
-# 
-# edges_sorted_to <- edges %>% 
-#   sort_by(edges$toNode)
-# 
-# index <- function(data, group){
-#   data %>% 
-#   mutate(row = row_number()) %>% 
-#   group_by(!!ensym(group))  %>% 
-#   summarize(start_row = min(row), 
-#             edges = n()) 
-# }
-# index_from <- index(edges_sorted_from, "fromNode")
-# index_to <- index(edges_sorted_to, "toNode")
-# 
-# saveRDS(edges_sorted_from, "network/edges_sorted_from.rds")
-# saveRDS(edges_sorted_to, "network/edges_sorted_to.rds")
-# # saveRDS(index_from, "network/index_from.rds")
-# # saveRDS(index_to, "network/index_to.rds")
-# 
-# index_from <- readRDS("network/index_from.rds")
-# index_to <- readRDS("network/index_to.rds")
-# edges_sorted_from <- readRDS("network/edges_sorted_from.rds")
-# edges_sorted_to <- readRDS("network/edges_sorted_to.rds")
-# 
-# write.csv(edges_sorted_from, gzfile("network/edges_sorted_from.csv.gz"), row.names = FALSE)
-# write.csv(edges_sorted_to, gzfile("network/edges_sorted_to.csv.gz"), row.names = FALSE)
-# 
-# fread("network/edges_sorted_from.csv.gz", skip = start_row, nrows = 2)
-# 
-# 
-# 
-# get_network <- function(selected_genes, index_file, col, edges_sorted) {
-#   # Find the corresponding start row and edge count for the selected gene
-#   gene_index <- index_file %>% filter(!!ensym(col) %in% selected_genes)
-#   
-#   if (nrow(gene_index) == 0) {
-#     stop("Gene(s) not found in index file.")
-#   }
-#   
-#  # Initialize an empty list to store results
-#   all_selected_rows <- list()
-#   
-#   # Loop through each gene and get the corresponding rows
-#   for (gene in selected_genes) {
-#     gene_rows <- gene_index %>% filter(!!ensym(col) == gene)
-#     start_row <- gene_rows$start_row
-#     edge_count <- gene_rows$edges
-#     
-#     # Get the rows for this gene from the edges_sorted_from file
-#     selected_rows <- fread(paste0("network/", edges_sorted, ".csv.gz"), skip = start_row, nrows = edge_count) 
-#     all_selected_rows[[gene]] <- selected_rows
-#   }
-#   
-#   # Combine all the selected rows into a single data frame
-#   result_df <- bind_rows(all_selected_rows)
-#   colnames(result_df) <- c("fromNode", "toNode", "weight")
-#   return(result_df)
-# }
-# 
-# #change to lapply!!
-# 
-# selected_genes <- c("Potra2n8c17315", "Potra2n1016s36925")
-# 
-# 
-# 
-# 
-# first_neigh <- rbind(get_network(selected_genes, index_from, "fromNode", "edges_sorted_from"), get_network(selected_genes, index_to, "toNode", "edges_sorted_to"))
-# 
-# first_neigh <- first_neigh %>% 
-#   filter(weight >= 0.3)
-# 
-# 
-# #From the first_neighbours file, find all the indexes for all the neighbours and find edges between first neighbours to create the complete subnetwork
-# 
-# get_edges_neigh <- function(selected_genes, index_file, col, edges_sorted) {
-#   # Find the corresponding start row and edge count for the selected gene
-#   gene_index <- index_file %>% filter(!!ensym(col) %in% selected_genes)
-#   
-#   # gene_index <- index_from %>% filter(fromNode %in% "Potra2n9c19758")
-#   
-# 
-#   
-#  # Initialize an empty list to store results
-#   all_selected_rows <- list()
-#   
-#  
-#   
-#   # Loop through each gene and get the corresponding rows
-#   for (gene in selected_genes) {
-#     print(gene)
-#     gene_rows <- gene_index %>% filter(!!ensym(col) == gene)
-#     
-#        if (nrow(gene_rows) == 0) {
-#     print("Gene not found in index file.")
-#    next
-#        }
-#     
-#     start_row <- gene_rows$start_row
-#     edge_count <- gene_rows$edges
-#     
-#     # Get the rows for this gene from the edges_sorted_from file
-#     selected_rows <- fread(paste0("network/", edges_sorted, ".csv.gz"), skip = start_row, nrows = edge_count) 
-#     colnames(selected_rows) <- c("fromNode", "toNode", "weight")
-#     selected_rows <- selected_rows %>% filter(fromNode %in% selected_genes & toNode %in% selected_genes)
-#     all_selected_rows[[gene]] <- selected_rows
-# 
-#     }
-#   
-#   # Combine all the selected rows into a single data frame
-#   result_df <- bind_rows(all_selected_rows) 
-#   # 
-#   # %>% distinct()
-#   colnames(result_df) <- c("fromNode", "toNode", "weight")
-#   return(result_df)
-# }
-# 
-# first_neigh_nodes <- unique(c(first_neigh$fromNode, first_neigh$toNode))
-# first_neigh_nodes <- setdiff(first_neigh_nodes, selected_genes)
-# 
-# a <- c( "Potra2n966s36909","Potra2n9c19758", "Potra2n7c16213", "Potra2n7c16214")
-# 
-# first_neigh_edges <- get_edges_neigh(first_neigh_nodes, index_from, "fromNode", "edges_sorted_from") #We can do it in one file only because we are looking for edges that have first neighbours on both sides (even if one gene doesn't appear on the from file, the genes connected to it will)
-# 
-# first_neigh_edges <- first_neigh_edges %>% 
-#   filter(weight >= 0.3)
-# 
-# first_neigh_network <- rbind(first_neigh, first_neigh_edges) #This is the subnetwork for the selected genes filtered by the input weight
-# 
-# 
-# #Verify that first neigh networks equals to subnetwork we would get from the big file
-# 
-# filtered_edges <- edges_sorted_from %>%
-#             filter((fromNode %in% selected_genes | toNode %in% selected_genes) & weight >= 0.3)
-# 
-# filtered_nodes <- unique(c(filtered_edges$fromNode, filtered_edges$toNode))
-# 
-# filtered_edges_neigh <- edges_sorted_from %>%
-#             filter((fromNode %in% filtered_nodes & toNode %in% filtered_nodes) & weight >= 0.3)
-
-
-#It matches!!
-
-
-
-# # Convert edges to a data.table for faster processing
-# edges <- as.data.table(edges)
-# # edges <- data.frame(edges)
-# 
-# edges <- edges %>% 
-#   select(fromNode, toNode, weight)
-# 
-# 
-# # # Get a list of all unique genes in the edges file
-# unique_genes <- nodes$nodeName
-# # 
-# # # Apply the function to each gene and save the results
-# # lapply(unique_genes, first_neighbors, edges = edges, subannot = subannot)
-# # gene_id <- "Potra2n1c3477"
-# library(parallel)
-# 
-# # Function to process first neighbors
-# first_neighbors <- function(gene_id, edges, subannot) {
-#   
-#   # Progress checkpoint: Start processing the gene
-#   message(paste("Processing gene:", gene_id))
-#   
-#   # Filter for rows where the gene is in 'fromNode' or 'toNode'
-#   filtered_edges <- edges[edges$fromNode == gene_id | edges$toNode == gene_id,]
-# 
-#   # Add the gene as a self-loop edge
-#   goi_edge <- data.frame(fromNode = gene_id, toNode = gene_id, weight = 1)
-#   filtered_edges <- rbind(goi_edge, filtered_edges)
-# 
-#   # Create node information
-#   filtered_nodes <- data.frame(
-#     id = unique(c(filtered_edges$fromNode, filtered_edges$toNode)),
-#     `Edge weight` = filtered_edges$weight,
-#     check.names = FALSE
-#   ) 
-# 
-#   # Annotate and format
-#   ann <- filtered_nodes %>%
-#     left_join(subannot, by = c("id" = "Gene name")) %>%
-#     separate(Module, c('Module_color', 'Module'), sep = "/") %>%
-#     arrange(desc(`Edge weight`)) %>%
-#     dplyr::select(-GOI, -Module_color)
-# 
-#   colnames(ann)[1] <- "Gene name"
-# 
-#   # Add links
-#   ann <- ann %>%
-#     mutate(link = paste0('<a href="https://plantgenie.org/gene?id=', ann[[1]], '" target="_blank">', ann[[1]], '</a>'))
-# 
-# 
-#   # Create a folder for the gene (if it doesn't already exist)
-#   dir.create(paste0("network/", gene_id))
-# 
-#   # Save the table as an RDS file inside the gene's folder
-#   saveRDS(ann, file.path(paste0("network/",gene_id), paste0(gene_id, "_first_neighbors.rds")))
-#  
-# }
-# 
-# install.packages("future")
-# install.packages("furrr")
-# 
-# library(furrr)
-# 
-# num_cores <- detectCores() - 1
-# 
-# # Set up the parallel plan to use multiple workers
-# plan(multisession, workers = num_cores) 
-# 
-# 
-# # Apply the function in parallel using `furrr`
-# future_map(unique_genes, first_neighbors, edges = edges, subannot = subannot)
-# 
-# 
-# 
-# 
-# 
-# #Create edges file for each gene
-#  edges_first_neighbors <- function(gene_id, edges) {
-#    message(paste("Processing gene:", gene_id))
-#    first_neighbors <- readRDS(paste0("network/", gene_id, "/", gene_id, "_first_neighbors.rds"))
-#    filtered_edges <- edges %>%
-#      filter(fromNode %in% first_neighbors$`Gene name` & toNode %in% first_neighbors$`Gene name`)
-#    saveRDS(filtered_edges, file.path(paste0("network/",gene_id), paste0(gene_id, "_first_neighbors_edges.rds")))
-#  }
-# # remaining_genes[[204]] 
-# # 
-# # remaining_genes <- unique_genes[1533:length(unique_genes)]
-# # remaining_genes2 <- unique_genes[204:length(remaining_genes)]
-# 
-# 
-# 
-# # future_map(remaining_genes, edges_first_neighbors, edges = edges)
-# 
-# lapply(unique_genes, edges_first_neighbors, edges = edges)
-
-
-
 
 
 ```
 
-```{r modules}
-#=== For mini version===#
-
-load("/Users/laia0002/aspen-FT-compendium/RData/GO_modules_1_3_2_year_around.RData")
-
-module_color <- setNames(unique(subannot$Module), unique(subannot$Module_color))
-index <- setNames(unique(subannot$Module), unique(subannot$Module_color))
-names(GO_modules) <- module_color[names(GO_modules)]
-
-#Remove module trash grey and brown4/46, 46 has no GO terms
-
-GO_modules <- GO_modules[c(2:45, 47)]
-sort(names(GO_modules))
-
-GO_modules_df <- do.call(rbind, lapply(names(GO_modules), function(name) {
-      cbind(Module = name, GO_modules[[name]])
-    })) 
-
-# get_module <- function (number) {
-#  GO_modules[[number]]
-# }
-
-
-# saveRDS(GO_modules_df, "/Users/laia0002/POPUL_R/GO_modules.rds")
-
-# GO_modules <- readRDS("/Users/laia0002/POPUL_R/GO_modules.rds")
-
-#Only save necessary modules in mini
-# modules_mini <- filter(subannot, `Gene name` %in% GOIs_paper$`Gene name`) %>% 
+```{r load network and modules}
+# #=== For mini version===#
+# 
+# load("/Users/laia0002/aspen-FT-compendium/RData/GO_modules_1_3_2_year_around.RData")
+# 
+# module_color <- setNames(unique(subannot$Module), unique(subannot$Module_color))
+# index <- setNames(unique(subannot$Module), unique(subannot$Module_color))
+# names(GO_modules) <- module_color[names(GO_modules)]
+# 
+# #Remove module trash grey and brown4/46, 46 has no GO terms
+# 
+# GO_modules <- GO_modules[c(2:45, 47)]
+# sort(names(GO_modules))
+# 
+# GO_modules_df <- do.call(rbind, lapply(names(GO_modules), function(name) {
+#       cbind(Module = name, GO_modules[[name]])
+#     })) 
+# 
+# # get_module <- function (number) {
+# #  GO_modules[[number]]
+# # }
+# 
+# 
+# # saveRDS(GO_modules_df, "/Users/laia0002/POPUL_R/GO_modules.rds")
+# 
+# # GO_modules <- readRDS("/Users/laia0002/POPUL_R/GO_modules.rds")
+# 
+# #Only save necessary modules in mini
+# # modules_mini <- filter(subannot, `Gene name` %in% GOIs_paper$`Gene name`) %>% 
+# #   select(Module) %>% 
+# #   unique()
+# # nodes_mini <- readRDS("/Users/laia0002/POPUL_R_mini/network/nodes_mini.rds")
+# modules_mini <- filter(subannot, `Gene name` %in% nodes_mini$`Gene name`) %>% 
 #   select(Module) %>% 
 #   unique()
-# nodes_mini <- readRDS("/Users/laia0002/POPUL_R_mini/network/nodes_mini.rds")
-modules_mini <- filter(subannot, `Gene name` %in% nodes_mini$`Gene name`) %>% 
-  select(Module) %>% 
-  unique()
-
-GO_modules_mini <- filter(GO_modules_df, Module %in% modules_mini$Module)
-
-#Replace GO terms for GO IDs
-
-# Step 1: Split concatenated GO terms in `nodes_mini` into separate rows
-nodes_expanded <- nodes_mini %>%
-  separate_rows(`GO term`, sep = ";\\s*")  # Split by "; " or ";" with spaces
-
-# Step 2: Join with `GO_modules_df` to map GO terms to GO IDs
-nodes_with_ids <- nodes_expanded %>%
-  left_join(GO_modules_df %>% select(`GO term`, `GO id`), by = "GO term") %>% 
-  # filter(!is.na(`GO id`)) %>% 
-  unique() 
-#Warning will appear, relationship many to many is okay because I am putting all GO terms per gene
-
-# Step 3: Re-concatenate GO IDs by grouping back to original rows
-nodes_reformatted <- nodes_with_ids %>%
-    group_by(`Gene name`, Description, ATG, `ATG symbol`, `ATG full name`, Family, Centrality, Module) %>% 
-    summarise (`GO id` = paste(`GO id`, collapse = "; "),
-               `GO term` = paste(`GO term`, collapse = "; "))
-
-nodes_reformatted$`GO id` <- ifelse(nodes_reformatted$`GO id` == "NA", NA, nodes_reformatted$`GO id`)
-
-saveRDS(nodes_reformatted, "/Users/laia0002/POPUL_R_mini/network/nodes_mini.rds")
-
-GO_modules_mini$`P-value` <- as.numeric(GO_modules_mini$`P-value`)
-saveRDS(GO_modules_mini, "/Users/laia0002/POPUL_R_mini/GO_modules_mini.rds")
+# 
+# GO_modules_mini <- filter(GO_modules_df, Module %in% modules_mini$Module)
+# 
+# #Replace GO terms for GO IDs
+# 
+# # Step 1: Split concatenated GO terms in `nodes_mini` into separate rows
+# nodes_expanded <- nodes_mini %>%
+#   separate_rows(`GO term`, sep = ";\\s*")  # Split by "; " or ";" with spaces
+# 
+# # Step 2: Join with `GO_modules_df` to map GO terms to GO IDs
+# nodes_with_ids <- nodes_expanded %>%
+#   left_join(GO_modules_df %>% select(`GO term`, `GO id`), by = "GO term") %>% 
+#   # filter(!is.na(`GO id`)) %>% 
+#   unique() 
+# #Warning will appear, relationship many to many is okay because I am putting all GO terms per gene
+# 
+# # Step 3: Re-concatenate GO IDs by grouping back to original rows
+# nodes_reformatted <- nodes_with_ids %>%
+#     group_by(`Gene name`, Description, ATG, `ATG symbol`, `ATG full name`, Family, Centrality, Module) %>% 
+#     summarise (`GO id` = paste(`GO id`, collapse = "; "),
+#                `GO term` = paste(`GO term`, collapse = "; "))
+# 
+# nodes_reformatted$`GO id` <- ifelse(nodes_reformatted$`GO id` == "NA", NA, nodes_reformatted$`GO id`)
+# 
+# saveRDS(nodes_reformatted, "/Users/laia0002/POPUL_R_mini/network/nodes_mini.rds")
+# 
+# GO_modules_mini$`P-value` <- as.numeric(GO_modules_mini$`P-value`)
+# saveRDS(GO_modules_mini, "/Users/laia0002/POPUL_R_mini/GO_modules_mini.rds")
 
 #====================#
 
@@ -591,6 +277,9 @@ edges <- data.frame(read_delim(paste0("/Users/laia0002/POPUL_R_extrafiles/edges-
 edges <- edges %>%
   dplyr::select(fromNode, toNode, weight)
 
+edges_dt <- as.data.table(edges)
+setkey(edges_dt, fromNode, toNode)
+
 nodes_subannot <- nodes %>% 
   select(nodeName) %>% 
   left_join(subannot, by = c("nodeName" = "Gene name")) %>% 
@@ -603,39 +292,48 @@ module_color <- setNames(unique(subannot$Module), unique(subannot$Module_color))
 index <- setNames(unique(subannot$Module), unique(subannot$Module_color))
 names(GO_modules) <- module_color[names(GO_modules)]
 
-#Remove module trash grey and brown4/46, 46 has no GO terms
+#Remove module trash grey(position 1) and brown4/46, 46 has no GO terms. Add empty df instead
 
-GO_modules <- GO_modules[c(2:45, 47)]
+GO_modules <- GO_modules[c(2:47)]
+GO_modules[["46"]] <- data.frame(`GO id` = NA,
+                                 `P-value` = NA,
+                                 x = NA,
+                                 n = NA,
+                                 `GO term` = NA,
+                                 check.names = FALSE)
 sort(names(GO_modules))
 
 GO_modules_df <- do.call(rbind, lapply(names(GO_modules), function(name) {
       cbind(Module = name, GO_modules[[name]])
     }))
+
 GO_modules_df$`P-value` <- as.numeric(GO_modules_df$`P-value`)
+GO_modules_df[is.na(GO_modules_df)] <- 0
+GO_modules_df <- data.table(GO_modules_df)
+
+  
 saveRDS(GO_modules_df, "/Users/laia0002/POPUL_R/GO_modules.rds")
 
-# Step 1: Split concatenated GO terms in `nodes_mini` into separate rows
 nodes_expanded <- nodes_subannot %>%
-  separate_rows(`GO term`, sep = ";\\s*")  # Split by "; " or ";" with spaces
+  separate_rows(`GO term`, sep = ";\\s*")  
 
-# Step 2: Join with `GO_modules_df` to map GO terms to GO IDs
 nodes_with_ids <- nodes_expanded %>%
   left_join(GO_modules_df %>% select(`GO term`, `GO id`), by = "GO term") %>% 
   # filter(!is.na(`GO id`)) %>% 
   unique() 
 #Warning will appear, relationship many to many is okay because I am putting all GO terms per gene
 
-# Step 3: Re-concatenate GO IDs by grouping back to original rows
 nodes_reformatted <- nodes_with_ids %>%
     group_by(`Gene name`, Description, ATG, `ATG symbol`, `ATG full name`, Family, Centrality, Module) %>% 
     summarise (`GO id` = paste(`GO id`, collapse = "; "),
                `GO term` = paste(`GO term`, collapse = "; "))
 
 nodes_reformatted$`GO id` <- ifelse(nodes_reformatted$`GO id` == "NA", NA, nodes_reformatted$`GO id`)
+nodes_reformatted <- data.table(nodes_reformatted)
 
 saveRDS(nodes_reformatted, "/Users/laia0002/POPUL_R/network/nodes.rds")
 
-saveRDS(edges, gzfile("/Users/laia0002/POPUL_R/network/edges.rds"))
+saveRDS(edges_dt, gzfile("/Users/laia0002/POPUL_R/network/edges.rds"))
 
 #===================#
 

@@ -12,6 +12,7 @@
 *.rds
 *.tar.gz
 *.txt.gz
+*.docx
 www/
 rsconnect/
 expression_data/
