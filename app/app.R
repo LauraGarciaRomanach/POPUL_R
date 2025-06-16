@@ -1,52 +1,55 @@
-library(shiny)
-library(shinyBS)
-library(bslib)
-library(shinythemes)
-library(ggplot2)
-library(plotrix)
-library(networkD3)
-library(DT)
-library(dplyr)
-library(tidyverse)
-library(cowplot)
-library(bs4Dash)
-library(shinyWidgets)
-library(htmltools)
-library(grid)
-library(gridExtra)
-library(InteractiveComplexHeatmap)
-library(ComplexHeatmap) 
-library(RColorBrewer)
-library(htmlwidgets)
-library(shinyjs)
-library(shinydashboard)
-library(svglite)
-library(data.table)
+pacman::p_load(
+  shiny,
+  shinyBS,
+  bslib,
+  shinythemes,
+  ggplot2,
+  plotrix,
+  networkD3,
+  DT,
+  dplyr,
+  tidyverse,
+  cowplot,
+  bs4Dash,
+  shinyWidgets,
+  htmltools,
+  grid,
+  gridExtra,
+  InteractiveComplexHeatmap,
+  ComplexHeatmap,
+  RColorBrewer,
+  htmlwidgets,
+  shinyjs,
+  shinydashboard,
+  svglite,
+  data.table
+)
 
-#paquete pacman: pacman load
 
 #Timeout: https://stackoverflow.com/questions/33839543/shiny-server-session-time-out-doesnt-work
 
-timeoutSeconds <- 1800
-
+timeoutMinutes <- 30
 inactivity <- sprintf("function idleTimer() {
-var t = setTimeout(logout, %s);
-window.onmousemove = resetTimer; // catches mouse movements
-window.onmousedown = resetTimer; // catches mouse movements
-window.onclick = resetTimer;     // catches mouse clicks
-window.onscroll = resetTimer;    // catches scrolling
-window.onkeypress = resetTimer;  //catches keyboard actions
+  var t = setTimeout(logout, %s);
+  window.onmousemove = resetTimer; // catches mouse movements
+  window.onmousedown = resetTimer; // catches mouse movements
+  window.onclick = resetTimer;     // catches mouse clicks
+  window.onscroll = resetTimer;    // catches scrolling
+  window.onkeypress = resetTimer;  // catches keyboard actions
 
-function logout() {
-Shiny.setInputValue('timeOut', '%ss')
-}
+  function logout() {
+    Shiny.setInputValue('timeOut', '%s minutes')
+  }
 
-function resetTimer() {
-clearTimeout(t);
-t = setTimeout(logout, %s);  // time is in milliseconds (1000 is 1 second)
+  function resetTimer() {
+    clearTimeout(t);
+    t = setTimeout(logout, %s);  // time is in milliseconds
+  }
 }
-}
-idleTimer();", timeoutSeconds*1000, timeoutSeconds, timeoutSeconds*1000)
+idleTimer();", 
+timeoutMinutes * 60 * 1000,    
+timeoutMinutes,                
+timeoutMinutes * 60 * 1000)    
 
 # Functions
 create_label <- function(name, image, width) {
@@ -380,7 +383,6 @@ ui <- fluidPage(
                      div(style = "margin-bottom: 40px;"), 
                      uiOutput("error_message"),
                      div(style = "margin-bottom: 40px;"), 
-                     textOutput("error_message_2"),
                      div(style = "margin-bottom: 40px;"), 
                      htmlOutput("threshold_message"),
                      div(style = "margin-bottom: 40px;"), 
@@ -613,10 +615,10 @@ server <- function(input, output, session) {
   #Tab Introduction
   output$Welcome <-renderText({
     paste("<p style='text-align:justify'>",
-    "Welcome to POPUL-R, a Shiny R application designed to help you explore the ",  em("Populus"), "transcriptome throughout a yearly growth cycle. This app uses a RNA-Seq dataset we have obtained from different poplar tissues in outdoor and indoor conditions.",
+    "Welcome to POPUL-R, a Shiny app designed to explore the ",  em("Populus"), "transcriptome throughout a yearly growth cycle. This app uses a RNA-Seq dataset we have obtained from different poplar tissues in outdoor and indoor conditions.",
     "</p>",
     "<p style='text-align:justify'>",
-    "In POPUL-R, you can perform exploratory analyses on your genes of interest: visualize their expression profiles, identify other genes with similar expression patterns, and explore the biological processes they may be involved in. All data generated in the app can be exported in multiple formats for further analysis, if necessary.",
+    "In POPUL-R, you can perform exploratory analyses on your genes of interest, such as visualizing their expression profiles, identifying other genes with similar expression patterns, and exploring the biological processes they may be involved in. All data generated in the app can be exported in multiple formats for further analysis, if necessary.",
     "</p>",
     "<p style='text-align:justify'>",
           'Each tab includes a section called "Instructions", which explains how to use all the displayed features. In this tab, you will also find:', 
@@ -635,7 +637,7 @@ server <- function(input, output, session) {
     "</p>", 
     "<p style='text-align:justify'>",
           "If you would like to incorporate your data to POPUL-R, please contact:", "<br>",
-          "laura.garcia@slu.se, ove.nilsson@slu.se")
+          "populr@proton.me")
   })
   
   output$concepts <-  renderText({
@@ -668,16 +670,16 @@ server <- function(input, output, session) {
   output$genes_methods <-  renderText({
     paste("The data was obtained from samples collected outdoors throughout a whole year and indoors throughout a growth cycle.", "</p>","<p style='text-align:justify'>",
           "The samples from outdoors were collected from ca. 1-year-old and 35-year-old local (Umeå, Sweden) aspen trees once a month around midday (Figure 2).", "</p>","<p style='text-align:justify'>",
-          "The indoor conditions that simulate the yearly growth cycle of <i>Populus</i> trees have been previously described in <a href='https://pub.epsilon.slu.se/24748/1/andre_d_210629.pdf' target='_blank'>André (2021)</a> (Figure 2). Briefly, the plants were transferred to soil and grown in long day (LD, 18h light/6h dark, 20°C/18°C) for four weeks. The trees were then subjected to short day treatment
+          "The indoor conditions that simulate the yearly growth cycle of <i>Populus</i> trees have been previously described in <a href='https://pub.epsilon.slu.se/24748/1/andre_d_210629.pdf' target='_blank'>André et al. (2021)</a> (Figure 2). Briefly, the plants were transferred to soil and grown in long day (LD, 18h light/6h dark, 20°C/18°C) for four weeks. The trees were then subjected to short day treatment
           (SD, 14h light/10h dark, 20°C/18°C) for 15 weeks to induce growth cessation and dormancy. The plants were moved to cold treatment (CT, 8h light/16h dark, 6°C/6°C) for 10 weeks to release dormancy. Lastly, plants were moved back to LD conditions to induce bud break. Samples from buds or leaves were taken in each treatment.", "</p>","<p style='text-align:justify'>",
-          'RNA was extracted and pre-processed as described in <a href="https://www.sciencedirect.com/science/article/pii/S0960982222007825?via%3Dihub" target="_blank">André (2022)</a>. The expression heatmaps are generated with the packages <a href="https://academic.oup.com/bioinformatics/article/32/18/2847/1743594" target="blank">"ComplexHeatmap"</a> and <a href="https://academic.oup.com/bioinformatics/article/38/5/1460/6448211" target="blank">"InteractiveComplexHeatmap"</a>, and co-expression analysis was performed using the R package
+          'RNA was extracted and pre-processed as described in <a href="https://www.sciencedirect.com/science/article/pii/S0960982222007825?via%3Dihub" target="_blank">André et al. (2022)</a>. The expression heatmaps are generated with the packages <a href="https://academic.oup.com/bioinformatics/article/32/18/2847/1743594" target="blank">"ComplexHeatmap"</a> and <a href="https://academic.oup.com/bioinformatics/article/38/5/1460/6448211" target="blank">"InteractiveComplexHeatmap"</a>, and co-expression analysis was performed using the R package
           <a href="https://bmcbioinformatics.biomedcentral.com/articles/10.1186/1471-2105-9-559" target="blank">"WGCNA"</a>. The visualization of the co-expression network is generated with the R package <a href= "https://cran.r-project.org/web/packages/networkD3/index.html"target="blank"> "networkD3"</a>. For more details, please see the Materials and Methods section in Marcon <i> et.al</i> (2025).')
   })
   
   output$methods_footnote <-  renderText({
     paste("<b>Figure 2. Temperature and day length of outdoor and indoor conditions.</b>", "</br>","<p style='text-align:justify'>",
           "Outdoor temperature represents the average daily temperature from January to December 2013 (excluding November). Meteorological data were obtained from the Swedish Meteorological and Hydrological Institute (<a href='https://www.smhi.se' target='blank'>SMHI</a>).", "<br>",  
-          "SD: short day. CT: cold treatment. BB: bud break. LD: long day. The number shown is the number of weeks in the treatment when the samples were taken.")
+          "SD: short day. CT: cold treatment. BB: bud break. LD: long day. The number shown is the number of weeks in the treatment when the samples were taken (see Figure 1).")
   })
   
 
@@ -693,8 +695,14 @@ server <- function(input, output, session) {
                            expression_plot = NULL,
                            thr = NULL , 
                            selected_GO = NULL) 
+  
+  observeEvent(input$show_heatmap, {
+    updateSliderInput(session, "weight_thr", value = 0.3)
+  })
+
 
   update_gene_list <- function(values, input) {
+    req(input$List_gen)
     if (input$List_gen == "fam") {
       ID <- input$TFfamil
       values$list_genes <- data %>%
@@ -705,14 +713,14 @@ server <- function(input, output, session) {
       values$list_genes <- unlist(strsplit(input$Genes_list_Tab2, "\n"))
     }
     
-    if (length(values$list_genes) == 0) {
-      # No valid genes found
+    if (length(values$list_genes) == 0 | nrow(data[Gene %in% values$list_genes]) == 0) {
+      
       values$error_message <- c(
-        "No data found for these genes. Please check the gene name."
+        "No data found for these genes."
       )
-      values$list_genes <- NULL  
+      values$list_genes <- character(0)  
     } else {
-      # Some valid genes found
+
       values$error_message <- NULL  
     }
     return(values$list_genes)
@@ -741,10 +749,10 @@ server <- function(input, output, session) {
         values$max_weight <- max(max_weight_goi$max_weight, na.rm = TRUE)
         values$max_min_weight <- min(max_weight_goi$max_weight, na.rm = TRUE)
         
-        values$threshold_message <- paste0("<b>Edge weight summary:</b><br> The range of maximum edge weights of your genes of interest is ",
+        values$threshold_message <- paste0("<b>Edge weight summary</b><br> The range of maximum edge weights of your genes of interest is ",
                                            trunc(values$max_min_weight * 10^2) / 10^2, "-",
                                            trunc(values$max_weight * 10^2) / 10^2,
-                                           ". If the chosen network edge weight is higher than the lowest value of this range, some genes of interest will not be shown in the table. If the chosen network edge weight is higher than the highest value of this range, the table will appear empty.")
+                                           ". If the chosen edge weight threshold is higher than the lowest value of this range, edges from some genes of interest will not be shown. If the chosen edge weight threshold exceeds the highest value of this range, the table will appear empty.")
         values$error_message <- NULL
       }
     }
@@ -753,25 +761,38 @@ server <- function(input, output, session) {
     
   }
   
-    filtered_edges <- eventReactive(input$show_heatmap, {
-    filtered_from <- edges[J(values$list_genes), on = "fromNode", nomatch = 0]
-    filtered_to <- edges[J(values$list_genes), on = "toNode", nomatch = 0]
-    filtered_edges <- unique(rbind(filtered_from, filtered_to))
-    return(filtered_edges)
-  })
+  observeEvent(
+    list(input$TFfamil, input$Genes_list_Tab2,input$List_gen), 
+    {
+      update_gene_list(values, input)
+    }
+  )
   
-  observeEvent(input$show_heatmap, {
-    update_gene_list(values, input)  
-    process_genes(values, filtered_edges()) 
-  })
-  
+    filtered_edges <- reactiveVal(data.table())
+    
+    observeEvent(input$show_heatmap, {
+      # update_gene_list(values, input)
+
+      filtered_from <- edges[J(values$list_genes), on = "fromNode", nomatch = 0]
+      filtered_to <- edges[J(values$list_genes), on = "toNode", nomatch = 0]
+      all_edges <- unique(rbind(filtered_from, filtered_to))
+      
+      filtered_edges(all_edges)
+      
+      process_genes(values, all_edges)
+    })
+    
+   error_display <- eventReactive(input$show_heatmap, {
+      values$error_message
+    })
+    
   output$error_message <- renderUI({
-      tags$div(style = "color: red; font-weight: bold;", values$error_message)
+    # req(input$show_heatmap)
+      tags$div(style = "color: red; font-weight: bold;", error_display())
   })
   
   observeEvent(input$submit_table, {
     values$thr <- input$weight_thr
-    print(values$thr)
   })
   
   output$threshold_message <- renderText({
@@ -877,15 +898,14 @@ server <- function(input, output, session) {
       paste(Sys.Date(), "_combined_expression_data.txt", sep = "")
     },
     content = function(file) {
-      write.table(expression_data_plot() %>% 
-                    dplyr::select(!Treatment2), file, sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE)
+      write.table(expression_data_plot(), file, sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE)
     })
   
   heatmap_data <- eventReactive(input$show_heatmap, {
     
     req(values$list_genes)
     print("Making heatmap data")
-    
+
     df <- expression_data() %>%
       ungroup() %>% 
       dplyr::select(!c(se, Treatment2, Location, Tissue, Family)) 
@@ -912,8 +932,16 @@ server <- function(input, output, session) {
      
     withProgress(message = 'Generating heatmap...', value = 0, {
       incProgress(0.2)  
+
       
-      if(nrow(heatmap_data()) == 1) {
+      if (is.null(heatmap_data()) || nrow(heatmap_data()) == 0) {
+        
+        # Case 1: No data — return blank heatmap or empty plot
+        heatmap <- grid::grid.newpage()  # This makes the output blank
+        
+      } else if (nrow(heatmap_data()) == 1) {
+      
+      # if(nrow(heatmap_data()) == 1) {
         heatmap <- ComplexHeatmap::pheatmap(mat = as.matrix(heatmap_data()),
                                             cluster_rows = FALSE,
                                             cluster_cols = FALSE, 
@@ -1019,6 +1047,29 @@ server <- function(input, output, session) {
   
  #First neighbors table
   observeEvent(input$submit_table, {
+    if(values$thr > values$max_weight) {
+      output$node_table <- DT::renderDT({
+        DT::datatable(
+          data.frame("The chosen edge weight threshold exceeds the highest value of the edge weights range (see Edge weight summary)."),  # Message as cell content
+          options = list(
+            dom = 't',                  
+            searching = FALSE,          
+            paging = FALSE,             
+            info = FALSE,               
+            columnDefs = list(
+              list(                     
+                targets = 0,
+                title = "",            
+                className = "dt-center" 
+              )
+            )
+          ),
+          rownames = FALSE,
+          colnames = ""                 
+        )
+      })
+
+    } else {
     annotated_nodes <- filtered_nodes_ann()
     annotated_nodes[[1]] <- paste0('<a href="https://plantgenie.org/gene?id=', annotated_nodes[[1]], '" target="_blank">', annotated_nodes[[1]], '</a>')
     
@@ -1038,11 +1089,11 @@ server <- function(input, output, session) {
         rownames = FALSE
       )
     })
+    }
   })
   
   output$node_table_footnote <-renderText({
-    paste("<p style='text-align:justify'>","First neighbors of the input genes according to the chosen edge weight threshold. The table is ordered by centrality of the gene in the co-expression network in descending order. If the gene name on the table is clicked,
-          you will be directed to the <a href 'https://plantgenie.org' target='blank'>PlantGenIE</a> entry of that gene. The module number corresponds to the module where the gene is found within the co-expression network. <br>", "Note: some genes will have expression data but they will not be found in the co-expression network at all because they do not have any strong correlations with any gene in the dataset.", "</p>"
+    paste("<p style='text-align:justify'>","First neighbors of the input genes according to the chosen edge weight threshold. The table is ordered by centrality of the gene in the co-expression network in descending order. The module number corresponds to the module where the gene is found within the co-expression network. <br>", "Note: some genes will have expression data but they will not be found in the co-expression network because they do not have any strong correlations with any gene in the dataset.", "</p>"
     )
   })
   
@@ -1153,6 +1204,7 @@ server <- function(input, output, session) {
   # Network Legend
   observeEvent(input$plot_network, {
     req(values$list_genes, values$selected_genes, network_data())
+
     
     df <- network_data()$nodes %>%
       select(Module) %>%
@@ -1185,7 +1237,12 @@ server <- function(input, output, session) {
   
   output$network_legend <- renderPlot({
     req(values$legend_data)
-    values$legend_data
+    if (!is.null(values$legend_data)) {
+      values$legend_data
+    }
+  }, height = function() {
+    if (is.null(values$legend_data)) return(1)
+    else return(400) 
   })
   
   output$dynamic_legend <- renderUI({

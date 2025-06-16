@@ -1,0 +1,5 @@
+app/src/
+.gitignore
+.git
+app/README.md
+app/app_mini.R

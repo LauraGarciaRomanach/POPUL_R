@@ -3,8 +3,6 @@
 .RData
 .Ruserdata
 *.Rproj
-.DS_Store
-.RDataTmp1
 .RDataTmp
 *.RData
 *.csv.gz
@@ -13,7 +11,6 @@
 *.tar.gz
 *.txt.gz
 *.docx
-www/
-rsconnect/
-expression_data/
-network/
+app/www/
+app/expression_data/
+app/network/
